@@ -1,5 +1,11 @@
-// Push a local commit's tree to GitHub through the REST API.
-// Used when git over HTTPS to github.com is blocked but api.github.com works.
+// Push the current working tree to GitHub through the REST API.
+//
+// Used when `git push` to github.com:443 is unreachable but api.github.com works.
+// The remote commit is built from the files as they are on disk (so uncommitted edits
+// would be included — commit first), with the current branch head as its parent so the
+// remote history keeps growing instead of being flattened.
+//
+//   GH_TOKEN=... node tools/git-push-api.mjs <owner/repo> <branch> <dir>
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -7,7 +13,7 @@ import { join } from 'node:path'
 const [, , repo, branch, dir] = process.argv
 const token = process.env.GH_TOKEN
 if (!repo || !branch || !dir || !token) {
-  console.error('usage: GH_TOKEN=... node push-api.mjs <owner/repo> <branch> <dir>')
+  console.error('usage: GH_TOKEN=... node tools/git-push-api.mjs <owner/repo> <branch> <dir>')
   process.exit(2)
 }
 
@@ -37,15 +43,10 @@ const list = execFileSync('git', ['ls-files', '-s', '-z'], { cwd: dir, encoding:
   .filter(Boolean)
   .map((line) => {
     const [meta, path] = line.split('\t')
-    const mode = meta.split(' ')[0]
-    return { path, mode: mode === '100755' ? '100755' : '100644' }
+    return { path, mode: meta.split(' ')[0] === '100755' ? '100755' : '100644' }
   })
 
 console.log(`files: ${list.length}`)
-
-const entries = []
-let done = 0
-const queue = [...list]
 
 // GitHub refuses blob creation while the repository has no commits at all.
 async function ensureSeed() {
@@ -65,6 +66,10 @@ async function ensureSeed() {
 }
 
 await ensureSeed()
+
+const entries = []
+let done = 0
+const queue = [...list]
 
 async function worker() {
   for (;;) {
@@ -100,22 +105,25 @@ const author = {
   date: execFileSync('git', ['log', '-1', '--pretty=%aI'], { cwd: dir, encoding: 'utf8' }).trim(),
 }
 
+// Keep the existing remote head as the parent so history accumulates.
+const head = await call('GET', `/repos/${repo}/git/ref/heads/${branch}`).catch(() => null)
+const parents = head?.object?.sha ? [head.object.sha] : []
+
 const tree = await call('POST', `/repos/${repo}/git/trees`, { tree: entries })
 const commit = await call('POST', `/repos/${repo}/git/commits`, {
   message,
   tree: tree.sha,
   author,
   committer: author,
-  parents: [],
+  parents,
 })
-console.log(`commit ${commit.sha}`)
+console.log(`commit ${commit.sha} (parents: ${parents.length})`)
 
-try {
-  await call('POST', `/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: commit.sha })
-  console.log(`created ref refs/heads/${branch}`)
-} catch (error) {
-  if (!String(error.message).includes('422')) throw error
+if (head) {
   await call('PATCH', `/repos/${repo}/git/refs/heads/${branch}`, { sha: commit.sha, force: true })
   console.log(`updated ref refs/heads/${branch}`)
+} else {
+  await call('POST', `/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: commit.sha })
+  console.log(`created ref refs/heads/${branch}`)
 }
 console.log('done')
