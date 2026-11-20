@@ -42,7 +42,7 @@ import { mindmapMermaid, mindmapTree, renderMindmapSection } from '../core/mindm
 import { buildKnowledgePrompt, extractKnowledge, fallbackKnowledge } from '../core/knowledge.js'
 import { OCR_CACHE_VERSION, dedupeKeyFor, ocrCachePath } from '../core/pipeline.js'
 import { chapterStats, fileStats, pageLookup, readingNote } from '../core/reading.js'
-import { readingSummary, statusView, outlineView } from '../core/agent-view.js'
+import { readView, readingSummary, statusView, outlineView } from '../core/agent-view.js'
 import { CODES, FAILURE_CODES, failure, isFailure } from '../core/error.js'
 import { checkExport, checkLevel, ingestKey, reusableJob } from '../core/guards.js'
 import { appendTrace, argsHash, readTrace, summarizeTrace, tracePathOf } from '../core/trace.js'
@@ -1955,6 +1955,22 @@ check('读取提示：只在真的没读到时候开口', () => {
   assert(readingNote({ pages: 3, withText: 0 }).includes('几乎都没读到'), '整章空白要直说')
   assert(readingNote({ pages: 4, withText: 1 }).includes('3/4'), '部分空白要给比例')
   return '三种情形措辞正确'
+})
+
+check('读正文：每段带页码标记，讲解才引得出具体页', () => {
+  const passages = [
+    { chapter: 2, chapterTitle: '第二章 数据表示', page: 7, text: '整数采用补码表示。' },
+    { chapter: 2, chapterTitle: '第二章 数据表示', page: 8, text: '浮点数遵循 IEEE 754。' },
+  ]
+  const view = readView(passages, 2, { maxChars: 2000 })
+  assert(view.text.includes('[p7]'), `第一段应带 [p7] 标记，实际：${view.text.slice(0, 40)}`)
+  assert(view.text.includes('[p8]'), '第二段应带 [p8] 标记')
+  assert(view.pages.join(',') === '7,8', `页码汇总不对：${view.pages}`)
+  assert(view.chars === view.text.length && view.charsTotal === view.text.length, '字数口径应与文本一致')
+  // a text-only deck has no pages, so nothing gets marked and offsets stay stable
+  const plain = readView([{ chapter: 1, chapterTitle: '绪论', page: 0, text: '没有页码的一段。' }], 1, { maxChars: 2000 })
+  assert(!plain.text.includes('[p'), `无页码时不应出现标记，实际：${plain.text}`)
+  return `${view.text.split('\n').length} 段带页码`
 })
 
 check('未知页不算"没读到"，不制造假缺口', () => {

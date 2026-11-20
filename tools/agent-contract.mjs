@@ -91,6 +91,20 @@ const ctx = {
 const { apply } = await import('../index.js')
 await apply(ctx, { dataDir, withVideos: false, reportLevel: 'normal', concurrency: 1, coverage: 'fast' })
 
+/* ---------------------------- scope narrowing --------------------------- */
+
+const service0 = provided.get('courseAgent')
+check(
+  'host registers no course_* tools globally (they belong to the preset scope)',
+  registered.size === 0,
+  [...registered.keys()].join(','),
+)
+check('service exposes registerTools for the preset scope', typeof service0?.registerTools === 'function')
+
+// The preset calls this from its own fiber; here we emulate that call.
+const disposers = service0?.registerTools?.(ctx) || []
+check('registerTools returns disposers', Array.isArray(disposers) && disposers.length === 9, String(disposers.length))
+
 /* ------------------------------- surface ------------------------------- */
 
 const names = [...registered.keys()]
@@ -201,6 +215,41 @@ if (status.ok && status.status === 'done' && status.reportPath) {
     exists = readFileSync(status.reportPath, 'utf8').length > 0
   } catch {}
   check('done job wrote its report', exists)
+}
+
+/* ----------------------------- preset realm ----------------------------- */
+
+// The narrowing only holds if the preset half actually registers the tools when
+// it is mounted — otherwise "not global" would mean "nowhere".
+registered.clear()
+const presetCleanups = []
+const presetCtx = {
+  tools: ctx.tools,
+  logger: ctx.logger,
+  get: (key) => (key === 'courseAgent' ? service0 : undefined),
+  inject(deps, callback) {
+    if (deps.includes('courseAgent')) callback(presetCtx)
+  },
+  effect(fn) {
+    presetCleanups.push(fn)
+  },
+}
+try {
+  const tutor = await import('../preset/tutor.js')
+  tutor.apply(presetCtx)
+  check(
+    'mounted preset registers the nine tools in its own scope',
+    EXPECTED.every((name) => registered.has(name)),
+    [...registered.keys()].join(','),
+  )
+  // unloading the preset must take its tools with it
+  for (const cleanup of presetCleanups) {
+    const disposer = cleanup()
+    await disposer?.()
+  }
+  check('unloading the preset removes its tools', registered.size === 0, [...registered.keys()].join(','))
+} catch (error) {
+  check('mounted preset registers the nine tools in its own scope', false, String(error?.message || error))
 }
 
 /* ------------------------------- teardown ------------------------------- */

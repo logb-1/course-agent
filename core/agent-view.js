@@ -234,11 +234,17 @@ const cutAt = (text, limit) => {
 export function readView(passages, chapter, options = {}) {
   const rows = chapterPassages(passages, chapter)
   if (!rows.length) return null
-  const whole = rows.map((row) => row.text).join('')
+  const pages = [...new Set(rows.map((row) => Number(row.page)).filter((page) => page > 0))]
+  // Provenance has to survive into the text the model reads: a separate `pages`
+  // array only says which pages were in play, not which sentence came from
+  // where, and an answer can only cite what it can see.
+  const marked = pages.length > 0
+  const whole = marked
+    ? rows.map((row) => `${Number(row.page) > 0 ? `[p${Number(row.page)}] ` : ''}${row.text}`).join('\n')
+    : rows.map((row) => row.text).join('')
   const offset = clampInt(options.offset, 0, Math.max(0, whole.length), 0)
   const maxChars = clampInt(options.maxChars, 400, LIMITS.maxReadChars, LIMITS.defaultReadChars)
   const window = cutAt(whole.slice(offset), maxChars)
-  const pages = [...new Set(rows.map((row) => Number(row.page)).filter((page) => page > 0))]
   return {
     jobId: options.jobId || '',
     chapter: Number(chapter),

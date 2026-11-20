@@ -1067,6 +1067,19 @@ export function apply(ctx, config = {}) {
     trace(jobId) {
       return readTrace(traceOf(jobId))
     },
+
+    /**
+     * Register the nine tools in the caller's scope.
+     *
+     * The Host plugin owns the implementation but not the visibility: the
+     * `course` preset calls this from its own fiber, so the tools exist exactly
+     * where the agent that uses them lives. Registering them here (globally)
+     * would put nine course tools in every session's tool list, including the
+     * ones that will never see a slide deck.
+     */
+    registerTools(scope) {
+      return registerCourseTools(scope, agentApi)
+    },
   }
 
   // Other plugins may depend on `courseAgent`; the tools below use the same
@@ -1077,7 +1090,9 @@ export function apply(ctx, config = {}) {
     ctx.logger?.warn?.(`[course-agent] courseAgent service unavailable: ${error.message}`)
   }
 
-  disposers.push(...registerCourseTools(ctx, agentApi))
+  // The tools are not registered here on purpose: `course` preset calls
+  // `courseAgent.registerTools` from its own scope (see preset/tutor.js), so
+  // only sessions that picked the tutor see them.
 
   ctx.effect?.(() => () => {
     // unload is not a place to leave pipelines running: abort them first so the

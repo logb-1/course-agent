@@ -42,7 +42,7 @@
 npm i course-agent
 ```
 
-装完这一条，Host 侧多出九个 `course_*` 工具、一个 `courseAgent` 服务，以及一个叫「课程助教」的预设——新建会话时选中它，agent 就按课程助教的规矩工作。左侧栏的「课程助手」面板走同一套实现，两条入口不会分叉。
+装完这一条，得到一个叫「课程助教」的预设和一个 `courseAgent` 服务。新建会话时选中这个预设，九件 `course_*` 工具才会出现在它手里——这是刻意的：工具只属于课程助教这个身份，别的会话不该背着九个用不上的工具定义。左侧栏的「课程助手」面板走同一套实现，两条入口不会分叉。
 
 > 改源码后必须重载 Host（`remove_bundle` + `install_bundle`）：Node 的 ESM 模块在进程内缓存，
 > 只改文件不会热替换。Client 部分刷新页面即可。
@@ -242,7 +242,7 @@ server/.venv/Scripts/python -m uvicorn app.main:app --app-dir server --port 8099
 
 ```bash
 node tools/regress.mjs --unit --strict      # 77 项，任何机器可跑，缺夹具即失败
-node tools/agent-contract.mjs               # 31 项：工具面契约 + 三条负例（导出/成本/幂等）
+node tools/agent-contract.mjs               # 35 项：工具面契约 + 三条负例 + 预设作用域
 node tools/client-contract.mjs              # Client 槽位与 key 契约
 node tools/e2e-fake.mjs                     # 假模型端到端
 node evals/run.mjs --fixture                # 12 项行为评测（合成课件，无需真实课件）
@@ -273,7 +273,8 @@ course-agent/
 │   ├── summarize.js review.js report.js pdfdoc.js diagram.js                   生成与排版
 │   ├── search.js coverage.js knowledge.js graph.js audit.js verify.js          检索与校验
 │   ├── pipeline.js store.js bili.js                                            编排与存储
-│   └── agent-tools.js agent-view.js reading.js                                 工具面与视图
+│   ├── tool-spec.js    # 工具表的单一真相：名字/描述/参数/副作用
+│   └── agent-tools.js agent-view.js reading.js                                 工具面、视图与读取统计
 ├── preset/             # 预设 persona（一次一问 / 成本闸门 / 页码溯源）
 ├── skills/course-tutor # skill：agent 的工作流
 ├── docs/               # 契约、设计取舍、截图

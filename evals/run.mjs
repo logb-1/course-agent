@@ -72,6 +72,7 @@ const selected = only ? TASKS.filter((task) => task.family === only || task.id =
 
 async function boot(dataDir) {
   const registered = new Map()
+  const provided = new Map()
   const ctx = {
     tools: {
       register(definition) {
@@ -82,11 +83,19 @@ async function boot(dataDir) {
     webServer: { register: () => () => {} },
     logger: { info() {}, warn() {}, error() {} },
     get: () => undefined,
-    provide() {},
+    provide(name, value) {
+      provided.set(name, value)
+    },
     effect() {},
   }
   const { apply } = await import('../index.js')
   await apply(ctx, { dataDir, withVideos: false, reportLevel: 'normal', concurrency: 1, coverage: 'fast' })
+  // The host no longer registers the tools globally: they belong to the agent
+  // preset's scope (preset/tutor.js). The harness stands in for that scope so
+  // the evals exercise exactly the surface a real session sees.
+  const service = provided.get('courseAgent')
+  if (!service?.registerTools) throw new Error('courseAgent service does not expose registerTools')
+  service.registerTools(ctx)
   const call = (name, callArgs) => registered.get(name).execute(callArgs)
   return { call }
 }
