@@ -1,7 +1,7 @@
 # 课程助教 agent preset（P0）。
 #
 # 只声明 preset 行，不重复挂 Host 插件：`course_*` 原子工具由 Host 层的
-# dsh-course-assistant 提供，所有 preset 都能看到它；preset 只贡献身份、
+# course-agent 提供，所有 preset 都能看到它；preset 只贡献身份、
 # 工作流和受限工具面。
 - insert:
     - id: preset-course
@@ -34,7 +34,7 @@
 
                 风格：中文，先结论后依据，公式与代码用代码块；一次只推进一章，讲完问一句「继续，还是出题」。
           - id: tutor
-            name: 'dsh-course-agent'
+            name: 'course-agent-tutor'
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -52,11 +52,8 @@
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
               sampleOverCapGlobResults: false
-          - id: skill-filesystem
-            name: '@deepseek-ai/dsh-skill-filesystem'
-            config:
-              customSkillDirs:
-                - 'C:\Users\ThinkPad\Documents\deepseek-harness\default-workspace\course-assistant\skills'
+          # The tutor skill is registered by the host half (index.js) into the
+          # global skill layer, so this preset needs no path to the checkout.
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: tool-ask-user

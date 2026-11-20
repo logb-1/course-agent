@@ -530,7 +530,7 @@ export async function buildPdf({ markdown, courseTitle = '课程报告', subtitl
     margins: { top: TOP, bottom: MARGIN, left: MARGIN, right: MARGIN },
     bufferPages: true,
     autoFirstPage: false,
-    info: { Title: cleanInline(courseTitle), Author: '课程助手', Creator: 'dsh-course-assistant' },
+    info: { Title: cleanInline(courseTitle), Author: '课程助手', Creator: 'course-agent' },
   })
 
   const chunks = []

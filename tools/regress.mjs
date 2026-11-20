@@ -28,7 +28,7 @@ import { supportScore, evaluateSummary } from '../core/verify.js'
 import { selectPassages, summarizeChapter } from '../core/summarize.js'
 import { splitSections } from '../core/sections.js'
 import { auditCoverage } from '../core/audit.js'
-import { createStore } from '../core/store.js'
+import { createStore, resolveDataDir } from '../core/store.js'
 import { __debug as ooxmlDebug } from '../core/ooxml.js'
 import { boundaryF1, evaluateDoc, windowDiff } from './segment-metrics.mjs'
 import { ask, buildIndex, indexFromPassages, search, serializePassages } from '../core/search.js'
@@ -513,7 +513,7 @@ check('导出：Anki CSV 与 course.json 结构', () => {
   assert(csv.includes('p.3'), 'CSV 缺少页码')
   assert(csv.includes('原文：价格上升会使需求量下降'), 'CSV 缺少引文')
   const json = JSON.parse(buildCourseJson(job))
-  assert(json.schema === 'dsh-course-assistant/course@1', `schema 不对：${json.schema}`)
+  assert(json.schema === 'course-agent/course@1', `schema 不对：${json.schema}`)
   assert(json.chapters[0].keyPoints[0].page === 3, 'course.json 丢了页码')
   assert(json.chapters[0].keyPoints[0].evidence.length > 0, 'course.json 丢了引文')
   return 'CSV 1 张卡 + course.json'
@@ -1980,8 +1980,26 @@ check('进度视图：未读页折算成一条可行动警告（不再静默）'
   return '派生警告 + 章节提示都到位'
 })
 
-/* --------------------------------- runner --------------------------------- */
+check('数据目录：默认用 course-agent，升级时先读旧目录', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ca-home-'))
+  const previous = process.env.DSH_HOME
+  try {
+    process.env.DSH_HOME = home
+    assert(resolveDataDir('') === join(home, 'course-agent'), '没有旧目录时应指向 course-agent')
+    mkdirSync(join(home, 'course-assistant'))
+    assert(resolveDataDir('') === join(home, 'course-assistant'), '只有旧目录时应继续读旧库（改名不等于新装）')
+    mkdirSync(join(home, 'course-agent'))
+    assert(resolveDataDir('') === join(home, 'course-agent'), '新目录出现后应切到新库')
+    assert(resolveDataDir('D:/somewhere') === 'D:/somewhere', '显式 dataDir 优先')
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(home, { recursive: true, force: true })
+  }
+  return '旧库可读，新库优先'
+})
 
+/* --------------------------------- runner --------------------------------- */
 const selected = checks.filter(({ group }) => (ONLY_UNIT ? group === 'unit' : ONLY_REAL ? group === 'real' : true))
 let failed = 0
 let skipped = 0

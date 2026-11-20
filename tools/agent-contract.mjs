@@ -1,7 +1,7 @@
 /**
  * Contract test for the agent surface (P1a step 1).
  *
- * Two things must hold for course-assistant to behave like a normal agent tool:
+ * Two things must hold for course-agent to behave like a normal agent tool:
  *   1. the surface is atomic — one verb per tool, no action switch, no aliases;
  *   2. nothing blocks — a run returns a jobId immediately and progress is polled.
  *
@@ -60,6 +60,7 @@ writeFileSync(
 const registered = new Map()
 const provided = new Map()
 const cleanups = []
+const skills = []
 
 const ctx = {
   tools: {
@@ -70,7 +71,15 @@ const ctx = {
   },
   webServer: { register: () => () => {} },
   logger: { info() {}, warn() {}, error() {} },
-  get: () => undefined,
+  get: (key) =>
+    key === 'skills'
+      ? {
+          register(skill) {
+            skills.push(skill)
+            return () => {}
+          },
+        }
+      : undefined,
   provide(name, value) {
     provided.set(name, value)
   },
@@ -94,6 +103,12 @@ const actionTools = names.filter((name) => {
 })
 check('no tool takes an action switch', actionTools.length === 0, actionTools.join(','))
 
+check(
+  'registers the bundled tutor skill on the global layer',
+  skills.length === 1 && skills[0].name === 'course-tutor' && skills[0].content.length > 200 && skills[0].source === 'bundled',
+  skills.map((skill) => `${skill.name}:${skill.content.length}`).join(','),
+)
+
 check('every tool declares an output schema and a description', names.every((name) => {
   const tool = registered.get(name)
   return !!tool.description && !!tool.output && typeof tool.execute === 'function'
@@ -106,8 +121,8 @@ check('course_ingest takes no required params (files are validated at call time)
 
 /* -------------------------------- service ------------------------------- */
 
-const service = provided.get('courseAssistant')
-check('provides courseAssistant to other plugins', !!service)
+const service = provided.get('courseAgent')
+check('provides courseAgent to other plugins', !!service)
 check('service exposes the same 9 verbs', !!service && ['health', 'ingest', 'status', 'outline', 'read', 'ask', 'export', 'library', 'cancel'].every((k) => typeof service[k] === 'function'))
 
 const call = (name, args) => registered.get(name).execute(args)

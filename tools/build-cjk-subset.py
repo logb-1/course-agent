@@ -71,7 +71,7 @@ def main() -> int:
     print(f"instanced: {static_path} ({static_path.stat().st_size} bytes)")
 
     chars = gb2312_chars() | extra_chars()
-    chars_path = Path(tempfile.gettempdir()) / "course-assistant-charset.txt"
+    chars_path = Path(tempfile.gettempdir()) / "course-agent-charset.txt"
     chars_path.write_text("".join(sorted(chars)), encoding="utf-8")
     print(f"charset: {len(chars)} code points")
 

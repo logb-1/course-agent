@@ -1,8 +1,8 @@
 {
-  "name": "dsh-course-agent",
-  "version": "0.1.0",
+  "name": "course-agent-tutor",
+  "version": "0.2.0",
   "private": true,
-  "description": "课程助教 agent preset（P0）：为 dsh-course-assistant 提供人设与标准工作流",
+  "description": "「课程助教」agent preset：为 course-agent 提供人设、九件工具的使用纪律与标准工作流",
   "type": "module",
   "exports": {
     ".": "./tutor.js"

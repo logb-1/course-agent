@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { createStore } from '../core/store.js'
 import { runPipeline } from '../core/pipeline.js'
 
-const dataDir = join(process.cwd(), 'course-assistant', '.tmp-data')
+const dataDir = join(process.cwd(), 'course-agent', '.tmp-data')
 rmSync(dataDir, { recursive: true, force: true })
 const store = createStore(dataDir)
 

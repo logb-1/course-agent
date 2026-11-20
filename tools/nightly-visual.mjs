@@ -23,7 +23,7 @@ const UPDATE = process.argv.includes('--update')
 
 const tokenFiles = [
   process.env.DSH_WEB_TOKEN_FILE,
-  join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'course-assistant', 'web-token.txt'),
+  join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'course-agent', 'web-token.txt'),
   join(ROOT, '.nightly-token'),
 ].filter(Boolean)
 

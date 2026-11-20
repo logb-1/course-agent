@@ -100,7 +100,7 @@ export function markdownToDocx(markdown, title = 'report') {
 
   const core = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">
-<dc:title>${esc(title)}</dc:title><dc:creator>course-assistant</dc:creator></cp:coreProperties>`
+<dc:title>${esc(title)}</dc:title><dc:creator>course-agent</dc:creator></cp:coreProperties>`
 
   return writeZip([
     { name: '[Content_Types].xml', data: contentTypes },

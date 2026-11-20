@@ -1,9 +1,9 @@
 {
-  "name": "dsh-course-assistant",
-  "version": "1.19.0",
+  "name": "course-agent",
+  "version": "2.0.0",
   "private": false,
   "type": "module",
-  "description": "课件 → 目录 · 导图 · 分章讲义 · 出题判分 · 复习排期，以 agent 工具面运行在 DeepSeek Harness 上",
+  "description": "课程 agent：课件 → 目录 → 分章讲义 → 出题判分 → 复习排期，九个原子工具 + 可溯源的读取统计",
   "author": "logb-1",
   "license": "MIT",
   "repository": {
@@ -17,8 +17,8 @@
   "keywords": [
     "deepseek-harness",
     "dsh",
-    "dsh-plugin",
     "agent",
+    "agent-tools",
     "course",
     "exam-prep",
     "slides",

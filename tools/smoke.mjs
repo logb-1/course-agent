@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { basename, join, extname } from 'node:path'
 
-const BASE = process.env.DSH_WEB_URL ? `${process.env.DSH_WEB_URL}/course-assistant` : 'http://127.0.0.1:54763/course-assistant'
+const BASE = process.env.DSH_WEB_URL ? `${process.env.DSH_WEB_URL}/course-agent` : 'http://127.0.0.1:54763/course-agent'
 const files = process.argv.slice(2)
 if (!files.length) {
   console.error('usage: node tools/smoke.mjs <file> [<file>...]')
@@ -69,7 +69,7 @@ console.log(
 )
 if (job.warnings?.length) console.log('warnings:', job.warnings)
 
-const outDir = join(process.cwd(), 'course-assistant', 'samples')
+const outDir = join(process.cwd(), 'course-agent', 'samples')
 mkdirSync(outDir, { recursive: true })
 const stem = basename(files[0], extname(files[0])).slice(0, 60)
 

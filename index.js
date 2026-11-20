@@ -1,11 +1,11 @@
 /**
- * Host half of @local/course-assistant.
+ * Host half of course-agent.
  *
  * Responsibilities:
  *   • same-origin HTTP routes the panel calls (upload / run / poll / report)
  *   • one agent tool sharing the exact same pipeline
  *   • no state outside this machine: uploads, cache and reports live under
- *     `<DSH_HOME>/course-assistant` (config `dataDir` overrides it)
+ *     `<DSH_HOME>/course-agent` (config `dataDir` overrides it)
  *
  * The model is reached through the Host `llm` service, so the plugin uses the
  * profile's configured provider/model and never needs an API key of its own.
@@ -13,7 +13,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { hostname } from 'node:os'
-import { basename, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Schema from 'schemastery'
 import { createStore, resolveDataDir } from './core/store.js'
@@ -39,8 +39,43 @@ const PKG = (() => {
     return { version: String(0) }
   }
 })()
+const SKILL_DIR = join(HERE, 'skills', 'course-tutor')
+const SKILL_FILE = join(SKILL_DIR, 'SKILL.md')
 
-export const name = 'course-assistant'
+/** Split `---` frontmatter from the body without pulling in a YAML dependency. */
+function parseSkill(markdown) {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(markdown)
+  if (!match) return { meta: {}, content: markdown.trim() }
+  const meta = {}
+  for (const line of match[1].split(/\r?\n/)) {
+    const at = line.indexOf(':')
+    if (at > 0) {
+      const value = line.slice(at + 1).trim().replace(/^['"]|['"]$/g, '')
+      meta[line.slice(0, at).trim()] = value
+    }
+  }
+  return { meta, content: markdown.slice(match[0].length).trim() }
+}
+
+/**
+ * Register the bundled skill on the host's global skill layer. The preset then
+ * needs no path into this checkout, and every agent — preset or plain — sees it.
+ */
+function registerTutorSkill(ctx) {
+  const skills = ctx.get?.('skills')
+  if (!skills?.register) return null
+  const { meta, content } = parseSkill(readFileSync(SKILL_FILE, 'utf8'))
+  return skills.register({
+    name: meta.name || 'course-tutor',
+    description: meta.description || '课程 agent 的工作流：建档、目录、按章讲解、出题判分、排期。',
+    ...(meta.whenToUse ? { whenToUse: meta.whenToUse } : {}),
+    content,
+    source: 'bundled',
+    resourceBase: { kind: 'directory', path: SKILL_DIR },
+  })
+}
+
+export const name = 'course-agent'
 export const inject = ['tools', 'webServer']
 
 /**
@@ -49,7 +84,7 @@ export const inject = ['tools', 'webServer']
  * Precedence for every field: request option > this config > built-in default.
  */
 export const Config = Schema.object({
-  dataDir: Schema.string().default('').description('上传/缓存/报告目录，留空用 <DSH_HOME>/course-assistant'),
+  dataDir: Schema.string().default('').description('上传/缓存/报告目录，留空用 <DSH_HOME>/course-agent'),
   concurrency: Schema.natural().min(1).max(5).default(4).description('并行章节数'),
   withVideos: Schema.boolean().default(true).description('默认是否检索 B 站网课'),
   images: Schema.string().default('ocr').description('幻灯片图片 OCR：ocr 读取图片文字，off 关闭'),
@@ -83,7 +118,7 @@ export const Config = Schema.object({
   keepUploadsDays: Schema.natural().min(1).max(90).default(7).description('上传文件保留天数'),
 })
 
-const ROUTE = '/course-assistant'
+const ROUTE = '/course-agent'
 const MAX_UPLOAD = 60 * 1024 * 1024
 const HEARTBEAT_MS = 15_000
 const STALE_MS = 90_000
@@ -112,7 +147,7 @@ export function buildAnkiCsv(job) {
 export function buildCourseJson(job) {
   return JSON.stringify(
     {
-      schema: 'dsh-course-assistant/course@1',
+      schema: 'course-agent/course@1',
       generatedAt: new Date().toISOString(),
       courseTitle: job.courseTitle || '',
       files: (job.files || []).map((f) => f.name),
@@ -185,6 +220,12 @@ export function apply(ctx, config = {}) {
   const jobInputs = new Map()
   const uploads = new Map()
   const disposers = []
+  try {
+    const disposeSkill = registerTutorSkill(ctx)
+    if (disposeSkill) disposers.push(disposeSkill)
+  } catch (error) {
+    ctx.logger?.warn?.(`[course-agent] skill registration failed: ${error?.message ?? error}`)
+  }
 
   const pick = (value) => (value === '' || value == null ? undefined : value)
   // precedence is the same for every field: request option > config > default
@@ -264,7 +305,7 @@ export function apply(ctx, config = {}) {
           extension: ext,
           priority: 'foreground',
           source: {
-            key: `course-assistant:${basename(input.path)}:${bytes.length}`,
+            key: `course-agent:${basename(input.path)}:${bytes.length}`,
             version: String(bytes.length),
             bytes: bytes.length,
             read: async () => ({ bytes, version: String(bytes.length) }),
@@ -411,7 +452,7 @@ export function apply(ctx, config = {}) {
           progress: aborted ? current.progress : 1,
         })
         store.saveJob(jobs.get(id))
-        if (!aborted) ctx.logger?.warn?.(`[course-assistant] job ${id} failed: ${error?.stack || error}`)
+        if (!aborted) ctx.logger?.warn?.(`[course-agent] job ${id} failed: ${error?.stack || error}`)
       })
       .finally(() => {
         controllers.delete(id)
@@ -465,7 +506,7 @@ export function apply(ctx, config = {}) {
           progress: aborted ? current.progress : 1,
         })
         store.saveJob(jobs.get(id))
-        if (!aborted) ctx.logger?.warn?.(`[course-assistant] rerun ${id} failed: ${error?.stack || error}`)
+        if (!aborted) ctx.logger?.warn?.(`[course-agent] rerun ${id} failed: ${error?.stack || error}`)
       })
       .finally(() => {
         controllers.delete(id)
@@ -542,7 +583,7 @@ export function apply(ctx, config = {}) {
         extension: 'docx',
         priority: 'foreground',
         source: {
-          key: `course-assistant:${job.id}`,
+          key: `course-agent:${job.id}`,
           version,
           bytes: docx.length,
           read: async () => ({ bytes: docx, version }),
@@ -728,16 +769,16 @@ export function apply(ctx, config = {}) {
   try {
     disposers.push(ctx.webServer.register({ kind: 'prefix', path: ROUTE, handler: routeHandler }))
   } catch (error) {
-    ctx.logger?.warn?.(`[course-assistant] route unavailable: ${error}`)
+    ctx.logger?.warn?.(`[course-agent] route unavailable: ${error}`)
   }
 
   // A previous process may have died mid-run; mark those jobs before the panel
   // starts polling them (otherwise it polls a `running` job forever).
   try {
     const reaped = reapZombies()
-    if (reaped) ctx.logger?.info?.(`[course-assistant] ${reaped} interrupted job(s) marked as zombie`)
+    if (reaped) ctx.logger?.info?.(`[course-agent] ${reaped} interrupted job(s) marked as zombie`)
   } catch (error) {
-    ctx.logger?.warn?.(`[course-assistant] zombie scan failed: ${error.message}`)
+    ctx.logger?.warn?.(`[course-agent] zombie scan failed: ${error.message}`)
   }
 
   /* ------------------------------ agent api ------------------------------ */
@@ -938,12 +979,12 @@ export function apply(ctx, config = {}) {
     },
   }
 
-  // Other plugins may depend on `courseAssistant`; the tools below use the same
+  // Other plugins may depend on `courseAgent`; the tools below use the same
   // object, so the panel and the agent can never disagree about a job.
   try {
-    ctx.provide?.('courseAssistant', agentApi)
+    ctx.provide?.('courseAgent', agentApi)
   } catch (error) {
-    ctx.logger?.warn?.(`[course-assistant] courseAssistant service unavailable: ${error.message}`)
+    ctx.logger?.warn?.(`[course-agent] courseAgent service unavailable: ${error.message}`)
   }
 
   disposers.push(...registerCourseTools(ctx, agentApi))

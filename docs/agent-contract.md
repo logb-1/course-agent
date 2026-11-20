@@ -21,7 +21,7 @@
 5. **显式给下一步**。结果带 `next: { tool, hint }`，告诉模型该调哪个工具，而不是让它猜。
 6. **失败给原因可行动**。`{ ok: false, reason }` 用中文写人话（「任务不存在」「目录还没生成（当前 running）」），不裸抛状态码。
 7. **先目录后正文**。`course_outline` → `course_read` / `course_ask`，正文按章读、可续读，一次不读全课程。
-8. **服务单一实现（双轨收口）**。工具与网页面板都走同一个 `courseAssistant` 服务；`ctx.provide('courseAssistant', api)`，其他插件/工具只能通过服务访问，不各自 new pipeline。
+8. **服务单一实现（双轨收口）**。工具与网页面板都走同一个 `courseAgent` 服务；`ctx.provide('courseAgent', api)`，其他插件/工具只能通过服务访问，不各自 new pipeline。
 
 ## 工具表
 
@@ -94,7 +94,7 @@ queued → running → done
 
 - 旧 `course_assistant` 工具已删除（9 个 action 全部作废）。旧名字下没有兼容壳——留着壳只会让模型
   继续走阻塞路径。
-- 面板 HTTP 路由不变（`/course-assistant/*`），网页端不受影响。
+- 面板 HTTP 路由不变（`/course-agent/*`），网页端不受影响。
 - 预设 persona 与 `skills/course-tutor/SKILL.md` 已同步改为新工具名与轮询说明。
 - 作业快照新增 `job.reading` 与每章 `stats`；旧 job 文件缺这两个字段时视图按「无统计」处理，不报错。
 

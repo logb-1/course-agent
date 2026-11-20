@@ -1,10 +1,10 @@
-# course-assistant bundle row.
+# course-agent bundle row.
 # Since 1.4.0 the plugin exports a Schemastery `Config`: every field below is
 # validated at activation and editable from the settings page (bad values fail
 # loudly instead of starting half-configured). Precedence everywhere:
 #   request option > this config > built-in default
 # Fields:
-#   dataDir          uploads/cache/reports root (default <DSH_HOME>/course-assistant)
+#   dataDir          uploads/cache/reports root (default <DSH_HOME>/course-agent)
 #   concurrency      parallel chapter summaries, 1-5 (default 4)
 #   withVideos       default true; false skips every Bilibili request
 #   domain           force the course domain, e.g. 'C++' (default: auto-detected)
@@ -25,8 +25,8 @@
 #   spacingMs        Bilibili request spacing, >=1000 (default 1000)
 #   keepUploadsDays  upload retention (default 7)
 - insert:
-    - id: course-assistant
-      name: 'dsh-course-assistant'
+    - id: course-agent
+      name: 'course-agent'
       config:
         concurrency: 4
         withVideos: true

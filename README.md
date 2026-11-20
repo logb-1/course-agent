@@ -27,22 +27,22 @@
 **A. 让 agent 自己装**（需要能连上 github.com）
 
 ```text
-帮我安装这个插件：install_bundle(target="github:logb-1/course-agent")
+帮我安装这个 agent：install_bundle(target="github:logb-1/course-agent")
 ```
 
 **B. 从目录装**（不用网络、适合改源码）
 
 ```text
-帮我装这个目录里的插件：C:\path\to\course-agent
+帮我装这个目录里的 agent：C:\path\to\course-agent
 ```
 
 **C. npm**
 
 ```bash
-npm i dsh-course-assistant     # 包名沿用旧名，见「关于名字」
+npm i course-agent
 ```
 
-装好后刷新页面，左侧栏出现「课程助手」图标——那是面板；agent 用的是同一套实现，两条入口不会分叉。
+装完这一条，Host 侧多出九个 `course_*` 工具、一个 `courseAgent` 服务，以及一个叫「课程助教」的预设——新建会话时选中它，agent 就按课程助教的规矩工作。左侧栏的「课程助手」面板走同一套实现，两条入口不会分叉。
 
 > 改源码后必须重载 Host（`remove_bundle` + `install_bundle`）：Node 的 ESM 模块在进程内缓存，
 > 只改文件不会热替换。Client 部分刷新页面即可。
@@ -202,7 +202,7 @@ node tools/bench/real-bench.mjs --pdf <真实PDF> --pages 1,2,3
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `dataDir` | `<DSH_HOME>/course-assistant` | 上传/缓存/报告根目录 |
+| `dataDir` | `<DSH_HOME>/course-agent` | 上传/缓存/报告根目录 |
 | `concurrency` | `4` | 并行总结的章节数（1–5） |
 | `withVideos` | `true` | 全局关闭 B 站检索 |
 | `provider` / `model` | profile 默认模型 | 覆盖总结模型 |
@@ -296,9 +296,9 @@ course-agent/
 
 ## 关于名字
 
-仓库叫 `course-agent`，包名与数据目录仍是 `dsh-course-assistant`——已安装的 profile 用链接指向该目录，
-改包名会让现有安装断链，所以先保持一致；`course-agent` 是项目名，「课程助手」是它在界面上的名字。
-要做一次彻底改名（包名、插件行 id、数据目录一起换）得重装并重新选预设，那是单独一步。
+它现在只叫一个名字：仓库、包名、Loader 行 id、HTTP 路由（`/course-agent`）、数据目录（`<DSH_HOME>/course-agent`）、Host 服务（`courseAgent`）全是 `course-agent`。「课程助手」只是左侧面板的中文名，「课程助教」是它作为 agent 的身份。
+
+从 `dsh-course-assistant` 升级上来的人：旧数据在 `<DSH_HOME>/course-assistant`，把整个目录复制成 `<DSH_HOME>/course-agent` 就能接着用历史课程；旧包与旧预设要在 profile 里移除（`plugin_manager remove_bundle`），再装这一个。
 
 ## 设计来源与许可
 

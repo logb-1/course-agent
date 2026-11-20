@@ -66,9 +66,9 @@ const ctx = {
 plugin.apply(ctx)
 
 const expected = [
-  { name: 'main', id: null, key: 'course-assistant' },
-  { name: 'sidebar.panellist', id: 'course-assistant' },
-  { name: 'conversation.composer.dock', id: 'course-assistant-dock' },
+  { name: 'main', id: null, key: 'course-agent' },
+  { name: 'sidebar.panellist', id: 'course-agent' },
+  { name: 'conversation.composer.dock', id: 'course-agent-dock' },
 ]
 
 for (const want of expected) {

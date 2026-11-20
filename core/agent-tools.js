@@ -1,5 +1,5 @@
 /**
- * The agent surface of course-assistant.
+ * The agent surface of course-agent.
  *
  * One tool with nine actions made the model carry an action switch in its head
  * and made every failure look alike. These are the atomic replacements: one
@@ -11,7 +11,7 @@
  *   • no tool returns more than a screenful — chapter text is paged by
  *     `offset`, reports are previewed and exported to a path.
  *
- * `api` is the courseAssistant service provided by index.js, which is also
+ * `api` is the courseAgent service provided by index.js, which is also
  * what the HTTP panel uses.
  */
 
@@ -42,7 +42,7 @@ export const TOOL_NAMES = [
 
 /**
  * @param {object} ctx plugin context (only `tools` is used)
- * @param {object} api courseAssistant service provided by the plugin
+ * @param {object} api courseAgent service provided by the plugin
  * @returns {Array<Function>} disposers
  */
 export function registerCourseTools(ctx, api) {

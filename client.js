@@ -1,22 +1,22 @@
-/* Client half of dsh-course-assistant.
+/* Client half of course-agent.
    Drag-and-drop course files → outline → knowledge points + Bilibili courses.
    Talks to the Host half over same-origin routes; no other network access. */
 
 /* The module id must be the package name: the web boot counts an entry as
    activated only when a factory is registered under that exact id. It used to
-   be the old workspace alias `@local/course-assistant`, which DSH 0.2.1-rc.3
-   no longer forgives ("web boot: 1 entry did not activate"). The window guard
+   be a workspace alias, which DSH 0.2.1-rc.3 no longer forgives
+   ("web boot: 1 entry did not activate"). The window guard
    also keeps a second evaluation of this file from registering twice. */
-if (!window.__COURSE_ASSISTANT_CLIENT__) {
-  window.__COURSE_ASSISTANT_CLIENT__ = true
+if (!window.__COURSE_AGENT_CLIENT__) {
+  window.__COURSE_AGENT_CLIENT__ = true
   window.__ModuleLoader__.load({
-  id: 'dsh-course-assistant',
+  id: 'course-agent',
   factory(require) {
     const React = require('react')
     const h = React.createElement
     const { useState, useEffect, useRef, useMemo, useCallback } = React
 
-    const ROUTE = '/course-assistant'
+    const ROUTE = '/course-agent'
     const ACCEPT = '.pptx,.pdf,.docx,.md,.txt,.markdown'
     const EXT = ACCEPT.split(',')
 
@@ -1087,23 +1087,23 @@ if (!window.__COURSE_ASSISTANT_CLIENT__) {
         })()
         const open = () => {
           try {
-            layout?.selectPanel?.('course-assistant')
+            layout?.selectPanel?.('course-agent')
           } catch {}
         }
         try {
-          off.push(ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'course-assistant' }, Panel)))
+          off.push(ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'course-agent' }, Panel)))
         } catch {}
         try {
           off.push(
             ctx.slots.inject('sidebar.panellist', () =>
-              ctx.slots.register({ name: 'sidebar.panellist', id: 'course-assistant', order: 20, label: () => '课程助手' }, PanelIcon),
+              ctx.slots.register({ name: 'sidebar.panellist', id: 'course-agent', order: 20, label: () => '课程助手' }, PanelIcon),
             ),
           )
         } catch {}
         try {
           off.push(
             ctx.slots.inject('conversation.composer.dock', () =>
-              ctx.slots.register({ name: 'conversation.composer.dock', id: 'course-assistant-dock', order: 60 }, (props) =>
+              ctx.slots.register({ name: 'conversation.composer.dock', id: 'course-agent-dock', order: 60 }, (props) =>
                 h(Dock, { ...props, open }),
               ),
             ),

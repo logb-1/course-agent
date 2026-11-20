@@ -7,7 +7,7 @@
  *
  * This plugin keeps only the activation-time probe: prove that a
  * preset-realm plugin can reach the Host plugin package. The Host layer now
- * registers the atomic `course_*` tools and provides the `courseAssistant`
+ * registers the atomic `course_*` tools and provides the `courseAgent`
  * service, so anything this preset grows later is a thin tool over that
  * service, not a second pipeline.
  *
@@ -18,7 +18,7 @@
 export const name = 'course-tutor'
 
 export function apply(ctx) {
-  import('dsh-course-assistant')
+  import('course-agent')
     .then((mod) => {
       ctx.logger?.info?.(
         `[course-tutor] preset realm -> host package ok (apply: ${typeof mod.apply}, name: mod.name || 'n/a')`,

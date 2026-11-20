@@ -2,7 +2,7 @@
  * Local store: uploads, jobs, reports and a small TTL cache.
  *
  * Everything stays on this machine: no account data, no database. The default
- * root is `<DSH_HOME>/course-assistant` (override with the plugin config's
+ * root is `<DSH_HOME>/course-agent` (override with the plugin config's
  * `dataDir`), so a workspace stays clean.
  */
 import {
@@ -25,7 +25,12 @@ const JOB_FILE = /^[0-9a-f]{8}\.json$/i
 export function resolveDataDir(configured) {
   if (configured) return configured
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-  return join(home, 'course-assistant')
+  const current = join(home, 'course-agent')
+  const legacy = join(home, 'course-assistant')
+  // Renamed from `dsh-course-assistant` in 2.0.0. An upgrade must not look
+  // like a fresh install, so read the old home until the new one exists.
+  if (!existsSync(current) && existsSync(legacy)) return legacy
+  return current
 }
 
 function ensure(dir) {

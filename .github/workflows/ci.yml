@@ -61,7 +61,7 @@ jobs:
       # 1.3.0 release almost shipped without core/rapidocr.py.
       - name: Every runtime file is inside the tarball
         run: |
-          TGZ=$(ls "$RUNNER_TEMP"/dsh-course-assistant-*.tgz)
+          TGZ=$(ls "$RUNNER_TEMP"/course-agent-*.tgz)
           tar -tzf "$TGZ" | sort
           for f in index.js client.js cordis.patch.yml core/ocr.ps1 core/rapidocr.py core/pipeline.js locale/zh.json icon.svg README.md LICENSE; do
             tar -tzf "$TGZ" | grep -qx "package/$f" || { echo "::error::missing $f in the package"; exit 1; }
