@@ -2121,6 +2121,17 @@ check('trace：每次工具调用一行，能汇总出成本与工具序列', ()
   return '可观测的最小闭环'
 })
 
+check('预设的 inject 只能是数组（对象形式会让挂载等一个叫 required 的服务）', () => {
+  const text = readFileSync(join(import.meta.dirname, '..', 'preset', 'tutor.js'), 'utf8')
+  const match = text.match(/export const inject = ([\s\S]*?)\n/)
+  assert(match, 'tutor.js 必须有 export const inject')
+  const declaration = match[1].trim()
+  assert(declaration.startsWith('['), `inject 必须是数组，现在是 ${declaration.slice(0, 40)}`)
+  assert(!/['"]?(required|optional)['"]?\s*:/.test(declaration), 'inject 里不能出现 required/optional 键')
+  assert(/courseAgent/.test(text), 'tutor.js 应通过 courseAgent 服务取工具面')
+  return 'Cordis 把对象声明读成 名字→配置，误写成 required/optional 会永久 pending'
+})
+
 /* --------------------------------- runner --------------------------------- */
 const selected = checks.filter(({ group }) => (ONLY_UNIT ? group === 'unit' : ONLY_REAL ? group === 'real' : true))
 let failed = 0

@@ -93,6 +93,11 @@
 
 `tools/agent-contract.mjs` 把这条钉成断言：Host 全局零个 `course_*`，挂载预设后九个，卸载后回到零。
 
+挂载失败的一个坑值得记下来：preset 插件的 `export const inject` **必须是数组**。Cordis 把对象声明读成
+`服务名 → 拦截配置`，写成 `{ required: [...], optional: [...] }` 会让预设去等两个叫 `required`、`optional` 的服务，
+于是永远停在 `waiting for required, optional`，输入区的预设列表里直接看不到它（那里只列未 broken 的预设）。
+可选依赖一律用 `ctx.get(name)` 读，不要塞进 `inject`。`tools/regress.mjs` 现在有一条断言守着这条（对象/数组都拦）。
+
 ## 作业状态机
 
 ```
