@@ -181,7 +181,7 @@ course-agent/
 安装（已执行，重复执行会走 upgrade）：
 
 ```powershell
-plugin_manager install_bundle target=C:\Users\ThinkPad\Documents\deepseek-harness\default-workspace\course-agent\preset
+plugin_manager install_bundle target=C:\Users\ThinkPad\Documents\deepseek-harness\default-workspace\course-agent-new\preset
 ```
 
 安装后 profile 里 `course-agent-tutor@0.1.0` 为 link，Loader 行 `preset-course` 已 live（`Config listConfigs` 与 standard/ptc/minimal/cordis 并列，status=schema）。
