@@ -29,6 +29,9 @@ import { SUPPORTED } from './core/parser.js'
 import { resolveLevel, resolveSprint, styleOfLevel } from './core/report-level.js'
 import { LIMITS, libraryView, outlineView, previewOf, readView, statusView } from './core/agent-view.js'
 import { registerCourseTools } from './core/agent-tools.js'
+import { CODES, failure } from './core/error.js'
+import { checkExport, checkLevel, ingestKey, reusableJob } from './core/guards.js'
+import { appendTrace, argsHash, readTrace, summarizeTrace, tracePathOf } from './core/trace.js'
 
 const HERE = join(fileURLToPath(new URL('.', import.meta.url)))
 const PDF_FONT = join(HERE, 'assets', 'fonts', 'NotoSansSC-Regular.ttf')
@@ -361,7 +364,10 @@ export function apply(ctx, config = {}) {
   }
 
   const finishJob = (id, job) => {
-    jobs.set(id, job)
+    // `finishedAt` is what lets a repeated ingest tell "just finished, reuse it"
+    // from "finished an hour ago, this is a new request".
+    const settled = job.finishedAt ? job : { ...job, finishedAt: new Date().toISOString() }
+    jobs.set(id, { ...settled, requestKey: requestKeys.get(id) || settled.requestKey })
     stopHeartbeat(id)
   }
 
@@ -433,7 +439,7 @@ export function apply(ctx, config = {}) {
       deps: { store, bili, llm },
       signal: controller.signal,
       emit: (next) => {
-        jobs.set(id, next)
+        jobs.set(id, { ...next, requestKey: requestKeys.get(id) || next.requestKey })
       },
     })
       .then((final) => {
@@ -787,7 +793,11 @@ export function apply(ctx, config = {}) {
   // entry point instead of "call the same internal functions as the routes".
 
   const controllers = new Map()
+  // The pipeline emits fresh snapshots, so the request identity has to live
+  // beside the jobs map rather than inside one snapshot that gets replaced.
+  const requestKeys = new Map()
   const jobOf = (id) => (id ? jobs.get(String(id)) || store.loadJob(String(id)) : null)
+  const traceOf = (jobId) => tracePathOf(store.jobsDir, String(jobId))
 
   const agentApi = {
     async health() {
@@ -822,18 +832,31 @@ export function apply(ctx, config = {}) {
       let inputs = []
       if (options.appendTo) {
         const restored = restoreInputs(String(options.appendTo))
-        if (restored.error) return { ok: false, reason: restored.error, appendTo: String(options.appendTo) }
+        if (restored.error) {
+          return failure(CODES.badRequest, restored.error, {
+            hint: '用 course_library 确认 jobId；追加需要原任务的上传文件还在有效期内',
+            details: { appendTo: String(options.appendTo) },
+          })
+        }
         inputs = [...restored.inputs]
       }
-      if (!list.length && !inputs.length) return { ok: false, reason: '请提供 files（至少一个课程文件路径），或 appendTo 追加到已有课程' }
+      if (!list.length && !inputs.length) {
+        return failure(CODES.badRequest, '请提供 files（至少一个课程文件路径），或 appendTo 追加到已有课程', {
+          hint: 'course_health 里有 supported 扩展名和 maxFiles 上限',
+        })
+      }
       for (const path of list) {
-        if (!existsSync(path)) return { ok: false, reason: `文件不存在：${path}` }
+        if (!existsSync(path)) return failure(CODES.badFile, `文件不存在：${path}`, { hint: '确认路径是绝对路径；课件要先下载到本机' })
         const stat = statSync(path)
-        if (!stat.isFile()) return { ok: false, reason: `不是文件：${path}` }
-        if (stat.size > MAX_UPLOAD) return { ok: false, reason: `文件过大（>${Math.round(MAX_UPLOAD / (1024 * 1024))}MB）：${path}` }
+        if (!stat.isFile()) return failure(CODES.badFile, `不是文件：${path}`)
+        if (stat.size > MAX_UPLOAD) {
+          return failure(CODES.badFile, `文件过大（>${Math.round(MAX_UPLOAD / (1024 * 1024))}MB）：${path}`)
+        }
         inputs.push({ path, name: basename(path) })
       }
-      if (inputs.length > LIMITS.maxFiles) return { ok: false, reason: `一次最多处理 ${LIMITS.maxFiles} 个文件` }
+      if (inputs.length > LIMITS.maxFiles) {
+        return failure(CODES.badRequest, `一次最多处理 ${LIMITS.maxFiles} 个文件`, { details: { maxFiles: LIMITS.maxFiles } })
+      }
       const optionsOfRun = optionsOf({
         withVideos: options.withVideos,
         reportLevel: options.reportLevel || options.reportStyle,
@@ -841,11 +864,32 @@ export function apply(ctx, config = {}) {
         target: options.target,
         minutes: options.minutes,
       })
-      const job = await makeJob(inputs, optionsOfRun)
-      if (options.appendTo) {
-        const created = jobs.get(job.id)
-        if (created) created.appendedFrom = String(options.appendTo)
+      // A costly level is a user decision, not a tool default.
+      const gate = checkLevel(optionsOfRun.reportLevel, options.confirm)
+      if (gate) return gate
+      // The same request twice is one job: the model often retries after a
+      // timeout, and building a second course doubles the spend for nothing.
+      const key = ingestKey(inputs, optionsOfRun, options.appendTo)
+      const reused = reusableJob(jobs, key)
+      if (reused) {
+        return {
+          jobId: reused.id,
+          status: reused.status,
+          reused: true,
+          files: inputs.map((input) => input.name),
+          level: reused.reportLevel || optionsOfRun.reportLevel,
+          appendedTo: options.appendTo ? String(options.appendTo) : '',
+          next: { tool: 'course_status', hint: '这个请求刚才已经建过档，直接轮询这个 jobId，不要重复建档' },
+        }
       }
+      const job = await makeJob(inputs, optionsOfRun)
+      requestKeys.set(job.id, key)
+      job.requestKey = key
+      if (options.appendTo) job.appendedFrom = String(options.appendTo)
+      jobs.set(job.id, job)
+      try {
+        store.saveJob(job)
+      } catch {}
       return {
         jobId: job.id,
         status: job.status,
@@ -858,20 +902,26 @@ export function apply(ctx, config = {}) {
 
     status(jobId) {
       const job = jobOf(jobId)
-      if (!job) return { ok: false, reason: '任务不存在（jobId 写错了，或任务已被删除）' }
-      return statusView(job)
+      if (!job) {
+        return failure(CODES.jobNotFound, '任务不存在（jobId 写错了，或任务已被删除）', { hint: '用 course_library 找 jobId' })
+      }
+      return statusView(job, { trace: readTrace(traceOf(job.id)) })
     },
 
     outline(jobId, syllabusPath) {
       const job = jobOf(jobId)
-      if (!job) return { ok: false, reason: '任务不存在' }
+      if (!job) return failure(CODES.jobNotFound, '任务不存在', { hint: '用 course_library 找 jobId' })
       if (!Array.isArray(job.chapters) || !job.chapters.length) {
-        return { ok: false, reason: `目录还没生成（当前 ${job.status}/${job.phase || '-'}）：先 course_status 等到 done`, status: job.status }
+        return failure(CODES.jobNotReady, `目录还没生成（当前 ${job.status}/${job.phase || '-'}）：先 course_status 等到 done`, {
+          retryable: true,
+          hint: '先 course_status 轮询到 done，再 course_outline',
+          details: { status: job.status },
+        })
       }
       const view = outlineView(job)
       const syllabus = String(syllabusPath || '').trim()
       if (!syllabus) return view
-      if (!existsSync(syllabus)) return { ok: false, reason: `考纲文件不存在：${syllabus}` }
+      if (!existsSync(syllabus)) return failure(CODES.badFile, `考纲文件不存在：${syllabus}`)
       try {
         const doc = parseFile(syllabus, basename(syllabus))
         // markdown/docx put the body in blocks, pdf/pptx in pages
@@ -899,21 +949,32 @@ export function apply(ctx, config = {}) {
 
     read(jobId, chapter, options = {}) {
       const job = jobOf(jobId)
-      if (!job) return { ok: false, reason: '任务不存在' }
+      if (!job) return failure(CODES.jobNotFound, '任务不存在', { hint: '用 course_library 找 jobId' })
       const rows = store.loadSearchIndex(job.id)
-      if (!rows?.length) return { ok: false, reason: '这个任务还没有可读正文（先等 course_status 到 done，或旧版本任务重跑一次）' }
+      if (!rows?.length) {
+        return failure(CODES.jobNotReady, '这个任务还没有可读正文（先等 course_status 到 done，或旧版本任务重跑一次）', {
+          retryable: true,
+          hint: 'course_status 到 done 再 course_read；旧任务可以 course_ingest appendTo 重跑',
+        })
+      }
       const view = readView(rows, chapter, { jobId: job.id, offset: options.offset, maxChars: options.maxChars })
-      if (!view) return { ok: false, reason: `第 ${chapter} 章没有正文（可用 course_outline 核对章号）` }
+      if (!view) {
+        return failure(CODES.badRequest, `第 ${chapter} 章没有正文（可用 course_outline 核对章号）`, {
+          hint: 'course_outline 拿到真实章号后再读',
+        })
+      }
       return view
     },
 
     ask(jobId, question, topK) {
       const job = jobOf(jobId)
-      if (!job) return { ok: false, reason: '任务不存在' }
+      if (!job) return failure(CODES.jobNotFound, '任务不存在', { hint: '用 course_library 找 jobId' })
       const questionText = String(question || '').trim()
-      if (!questionText) return { ok: false, reason: '请给出 question' }
+      if (!questionText) return failure(CODES.badRequest, '请给出 question', { hint: '把用户原问题传进来，例如「第 3 章的重点是什么」' })
       const rows = store.loadSearchIndex(job.id)
-      if (!rows?.length) return { ok: false, reason: '这个任务还没有可检索的内容（先等 course_status 到 done）' }
+      if (!rows?.length) {
+        return failure(CODES.jobNotReady, '这个任务还没有可检索的内容（先等 course_status 到 done）', { retryable: true })
+      }
       const limit = Number.isFinite(Number(topK)) ? Math.min(LIMITS.maxAnswers, Math.max(1, Math.round(Number(topK)))) : 3
       const { answers, hint } = ask(indexFromPassages(rows), questionText, limit)
       return { jobId: job.id, question: questionText, answers, hint }
@@ -921,7 +982,12 @@ export function apply(ctx, config = {}) {
 
     async export(jobId, format) {
       const job = jobOf(jobId)
-      if (!job) return { ok: false, reason: '任务不存在' }
+      if (!job) return failure(CODES.jobNotFound, '任务不存在', { hint: '用 course_library 找 jobId' })
+      // Only a finished job has artefacts worth handing over; csv/json used to
+      // be assembled from whatever fields existed, so a half-built course looked
+      // like a course.
+      const gate = checkExport(job)
+      if (gate) return gate
       const picked = ['md', 'pdf', 'csv', 'json'].includes(String(format)) ? String(format) : 'md'
       if (picked === 'csv' || picked === 'json') {
         const body = picked === 'csv' ? buildAnkiCsv(job) : buildCourseJson(job)
@@ -930,7 +996,12 @@ export function apply(ctx, config = {}) {
         return { jobId: job.id, format: picked, path, bytes: Buffer.byteLength(body) }
       }
       const markdown = job.markdown || (job.reportPath && existsSync(job.reportPath) ? readFileSync(job.reportPath, 'utf8') : '')
-      if (!markdown) return { ok: false, reason: '报告尚未生成' }
+      if (!markdown) {
+        return failure(CODES.jobNotReady, '报告文件不见了（可能被清理）', {
+          hint: 'course_status 看 reportPath；没有就 rerun 建档一次',
+          details: { reportPath: job.reportPath || '' },
+        })
+      }
       if (picked === 'md') {
         return { jobId: job.id, format: 'md', path: job.reportPath || '', chars: markdown.length, ...previewOf(markdown) }
       }
@@ -958,10 +1029,14 @@ export function apply(ctx, config = {}) {
     /** Abort a run: the pipeline already honours an AbortSignal. */
     cancel(jobId) {
       const job = jobOf(jobId)
-      if (!job) return { ok: false, reason: '任务不存在' }
+      if (!job) return failure(CODES.jobNotFound, '任务不存在', { hint: '用 course_library 找 jobId' })
       if (job.status !== 'running') return { ok: true, jobId: job.id, status: job.status, cancelled: false, reason: '任务已结束，无需取消' }
       const controller = controllers.get(job.id)
-      if (!controller) return { ok: false, reason: '这个任务不属于当前进程（可能已重启），无法取消' }
+      if (!controller) {
+        return failure(CODES.jobNotReady, '这个任务不属于当前进程（可能已重启），无法取消', {
+          hint: 'course_library 里状态是 running 但进程已重启时，等心跳超时会被标记 interrupted',
+        })
+      }
       controller.abort()
       const next = {
         ...job,
@@ -976,6 +1051,21 @@ export function apply(ctx, config = {}) {
       store.saveJob(next)
       controllers.delete(job.id)
       return { ok: true, jobId: job.id, status: 'cancelled', cancelled: true }
+    },
+
+    /**
+     * One line per tool call, written by the tool layer. Kept here so the api is
+     * the only thing that knows where traces live, and a future transport (or a
+     * second host) inherits the same behaviour.
+     */
+    noteToolCall(jobId, entry) {
+      if (!jobId) return false
+      return appendTrace(traceOf(jobId), entry)
+    },
+
+    /** The raw trace of a job — for the panel and for `course_status`. */
+    trace(jobId) {
+      return readTrace(traceOf(jobId))
     },
   }
 

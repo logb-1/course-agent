@@ -118,12 +118,31 @@ export function search(index, query, topK = 5) {
 
 /**
  * One call the panel and the tool both use.
+ *
+ * BM25 always ranks *something* first, so a query the deck cannot answer still
+ * came back with passages — and a model that receives passages will explain
+ * them. That is how "课件里没写" became a fabricated paragraph. So a passage
+ * must share at least half the query's words to count as an answer; when none
+ * do, the honest result is an explicit miss.
+ *
  * @returns {{answers:Array, hint:string}}
  */
 export function ask(index, question, topK = 3) {
-  const answers = search(index, question, topK)
+  const queryTokens = [...new Set(tokenize(question))]
+  const answers = search(index, question, Math.max(topK * 2, topK))
   if (!answers.length) return { answers: [], hint: '课件里没有检索到相关内容，换个问法或检查是否已生成要点' }
-  return { answers, hint: '' }
+  const needed = Math.max(1, Math.ceil(queryTokens.length * 0.5))
+  const relevant = answers.filter((answer) => {
+    const seen = new Set(tokenize(`${answer.chapterTitle || ''} ${answer.text}`))
+    return queryTokens.filter((token) => seen.has(token)).length >= needed
+  })
+  if (!relevant.length) {
+    return {
+      answers: [],
+      hint: `课件里没有检索到「${String(question).slice(0, 40)}」相关内容（只认字面重合，换同义词或看 course_outline）`,
+    }
+  }
+  return { answers: relevant.slice(0, topK), hint: '' }
 }
 
 /** Persistable form: tokens are cheap to recompute, text is what matters. */

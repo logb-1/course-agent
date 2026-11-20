@@ -19,17 +19,58 @@
 3. **状态可查询**。`course_status` 是唯一进度来源：`status`、`progress`、`chapters`、`reading`、`warnings`、`ocr`、`error`。
 4. **有界输出**。每个工具的输出有上限（字数、条目数），超限用 `truncated` + `nextOffset` / `next` 续读，不静默截断。
 5. **显式给下一步**。结果带 `next: { tool, hint }`，告诉模型该调哪个工具，而不是让它猜。
-6. **失败给原因可行动**。`{ ok: false, reason }` 用中文写人话（「任务不存在」「目录还没生成（当前 running）」），不裸抛状态码。
+6. **失败给原因与机器可读的 code**。`{ ok: false, code, reason, hint?, retryable? }`：`code` 给模型做分支（见下表），`reason` 是给人看的中文，`hint` 是下一步建议，不裸抛状态码、不留散文。
 7. **先目录后正文**。`course_outline` → `course_read` / `course_ask`，正文按章读、可续读，一次不读全课程。
 8. **服务单一实现（双轨收口）**。工具与网页面板都走同一个 `courseAgent` 服务；`ctx.provide('courseAgent', api)`，其他插件/工具只能通过服务访问，不各自 new pipeline。
+
+## 错误码
+
+`code` 是冻结的契约字段：调用方按它分支，所以只增不改。改一个 code 等于改一次工具面。
+
+| code | 何时 | `retryable` | 模型该做什么 |
+| --- | --- | --- | --- |
+| `bad_request` | 参数缺失/越界（如 `chapter` 不存在、`maxChars` 超上限） | 否 | 按 `hint` 改参数重试 |
+| `bad_file` | 上传不存在、超过 60 MB、类型不支持 | 否 | 让用户换文件 |
+| `job_not_found` | `jobId` 不存在或已被清理 | 否 | 用 `course_library` 找正确 id |
+| `job_not_ready` | 导出时未 `done`、报告还没落盘 | 是（running/queued 时） | 先 `course_status` 轮询，不要重试导出 |
+| `needs_confirm` | `reportLevel` 是 `max`/`plus` 但没带 `confirm: true` | 否 | 先向用户确认成本，再带 `confirm` 重发 |
+| `duplicate_job` | 同一批文件已在处理且不允许复用（保留） | 是 | 复用返回的 `jobId` |
+| `no_content` | 课件读完没有任何可讲内容 | 否 | 提示用户换/补课件 |
+| `internal` | 未预期异常 | 视情况 | 报告 `reason`，不要反复重试 |
+
+## 三条硬约束落在代码里
+
+契约从「文档里的 8 条」变成了「代码里会拒绝」：
+
+| 约束 | 实现 | 断言 |
+| --- | --- | --- |
+| `running` 不能导出 | `core/guards.js` `checkExport(job)` 在 `export` 组装之前 | 单测「导出闸门」+ 契约负例 |
+| `max/plus` 必须先确认成本 | `checkLevel(level, confirm)` 在 `ingest` 建 job 之前 | 单测「成本闸门」+ 契约负例（且断言没有建出 job） |
+| 同一批文件不重复建档 | `ingestKey` + `reusableJob(jobs, key, now, 5 分钟)`，命中回 `reused: true` | 单测「幂等」+ 契约负例 |
+
+`checkLevel` 只拦「没确认就贵」；`checkExport` 只拦「没写完就要成品」。两者都不改 pipeline，也不替模型做决定——它们只让「说一套做一套」在边界上失败。
+
+## 成本与调用轨迹
+
+`course_status` 现在回答「刚才那轮花了什么」：
+
+| 字段 | 含义 |
+| --- | --- |
+| `cost.modelCalls` / `cost.cacheHits` / `cost.cacheRatio` | 模型调用数、命中缓存数、命中率 |
+| `cost.sourceChars` / `cost.keptChars` | 输入字符、进正文的字符（判断 OCR/裁剪是否过狠） |
+| `cost.ms` | pipeline 各阶段累计耗时 |
+| `tools.calls` / `tools.failed` / `tools.ms` / `tools.tools` | 本作业的工具调用次数、失败数、总耗时、按工具计数 |
+
+明细写在 `<dataDir>/jobs/<jobId>.trace.jsonl`，每行 `{at, tool, argsHash, ok, code, ms}`。`argsHash` 只记参数指纹，不落课件路径与正文。trace 写入失败不影响工具调用（观测不应该让主流程失败），但 `tools: null` 会被视图标成「无轨迹」而不是 0 次。
+
 
 ## 工具表
 
 | 工具 | 语义 | 参数 | 返回要点 |
 | --- | --- | --- | --- |
 | `course_health` | 环境自检 | — | `ok`、`llm`、`pdf`、`ocrEngines`、`limits` |
-| `course_ingest` | 建档（异步） | `files`(≤12)、`appendTo`、`reportLevel`、`withVideos`、`days`/`target`/`minutes` | `jobId`、`status`、`next` |
-| `course_status` | 进度 | `jobId` | `status`、`phase`、`progress`、`chapters`、`reading`、`warnings`、`ocr`、`reportPath`、`next` |
+| `course_ingest` | 建档（异步） | `files`(≤12)、`appendTo`、`reportLevel`、`confirm`、`withVideos`、`days`/`target`/`minutes` | `jobId`、`status`、`reused`、`next` |
+| `course_status` | 进度 | `jobId` | `status`、`phase`、`progress`、`chapters`、`reading`、`warnings`、`ocr`、`cost`、`tools`、`reportPath`、`next` |
 | `course_outline` | 目录 | `jobId`、`syllabus?` | 每章 `chapter`/`title`/`pages`/`chars`/`read`/`note`/`keyPoints`/`offline`/`coverage` + 汇总 `reading` |
 | `course_read` | 读正文 | `jobId`、`chapter`、`offset`、`maxChars`(400–12000) | `text`、`pages`、`charsTotal`、`truncated`、`nextOffset`、`next` |
 | `course_ask` | 检索 | `jobId`、`question`、`topK` | `answers[]{page,chapter,text}`、`hint` |
@@ -86,6 +127,8 @@ queued → running → done
 
 - `course_ingest` 不再回灌报告正文（旧工具回 1500 字预览 + 全章要点，是大头 token）。
 - 正文只经 `course_read` 按需取，默认 6000 字，上限 12000；`course_ask` 只回 ≤4 条命中片段。
+- `course_ask` 有相关性下限：命中词数须 ≥ 查询词数的一半，否则回 0 条 + 说明。BM25 永远会排出「最像的一段」，
+  不设下限的话，一个课件里根本没有的问题也会拿到片段，而拿到片段的模型会把它们讲成答案。
 - `course_outline` 的 `keyPoints` 每章截到 6 条、`warnings` 截到 3 条，总数用 `*Total` 字段给。
 - `course_export` 的 `preview` 只截正文前 1200 字。
 - 读取统计只有计数（4 个整数），不随页数增长；它不是正文通道。
@@ -100,14 +143,24 @@ queued → running → done
 
 ## 验收
 
+四条一起跑才算「没坏」：
+
 ```powershell
-node tools/agent-contract.mjs          # 24 条契约断言（含"立刻返回 jobId"与 reading 字段）
-node tools/regress.mjs --unit --strict # 66 项单测（含 5 条读取统计），回归 pipeline
+node tools/regress.mjs --unit --strict    # 77 项单测：pipeline、闸门、幂等、trace、读取统计
+node tools/agent-contract.mjs             # 31 条契约断言：工具面形状 + 三条负例 + cost/tools
+node tools/client-contract.mjs            # 网页面板与工具的槽位契约
+node tools/e2e-fake.mjs                   # 假模型跑通整条管线
+node evals/run.mjs --fixture              # 12 项行为评测（合成课件，CI 每天都跑）
 ```
 
+前四条在 `.github/workflows/ci.yml`，行为评测在 `.github/workflows/nightly.yml`（真实课件路径不入库）。
+
 手动核对一次真实课件（本仓库常用样本 `实验3-面向对象编程&函数式编程.pptx`，56 页）：
-`status.reading` 应为 `{pages:56, withText:56, ocred:0, unknownPages:0, unreadPages:0, unreadChapters:0}`。
+`status.reading` 应为 `{pages:56, withText:56, ocred:0, unknownPages:0, unreadPages:0, unreadChapters:0}`；
+再用 `node evals/run.mjs --deck "实验3=<path>"` 对比 `evals/baseline.json`，应报 `matches baseline`。
 
-## 下一步（P2）
+## 下一步
 
-- P2：记忆与错题本——目标分、已读章节、错题落 `dsh-storage-domain`，经 `ctx.variables` 注入当前课程。
+- P1（工具面收敛）：schema 单一真相（`core/tool-spec.js`）、按 preset 收窄注册、页码级溯源（`[p12]` 前缀）、注入边界（XML 包裹课件原文）、persona/SKILL 版本化 + eval 前后对比。
+- P2（记忆）：目标分、已读章节、错题落 `dsh-storage-domain`，经 `ctx.variables` 注入当前课程。
+

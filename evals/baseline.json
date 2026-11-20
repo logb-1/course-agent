@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "generatedAt": "2026-11-20T09:50:13.313Z",
+  "decks": [
+    {
+      "label": "实验3",
+      "jobId": "5295e9b8",
+      "status": "done",
+      "reading": {
+        "pages": 56,
+        "withText": 56,
+        "ocred": 0,
+        "unknownPages": 0,
+        "unreadPages": 0,
+        "unreadChapters": 0
+      },
+      "results": {
+        "reading-honesty": true,
+        "citation-range": true,
+        "read-bounds": true,
+        "read-continuation": true,
+        "ask-miss": true,
+        "ask-hit": true,
+        "confirm-gate": true,
+        "export-gate": true,
+        "status-gate": true,
+        "read-gate": true,
+        "outline-gate": true,
+        "cost-visibility": true
+      },
+      "details": {
+        "reading-honesty": "56/56 read, 0 unread",
+        "citation-range": "2 passages on p2..p3",
+        "read-bounds": "400/1386 chars",
+        "read-continuation": "continues at 400",
+        "ask-miss": "explicit miss",
+        "ask-hit": "3 cited passages",
+        "confirm-gate": "needs_confirm",
+        "export-gate": "job_not_found",
+        "status-gate": "job_not_found",
+        "read-gate": "job_not_found",
+        "outline-gate": "job_not_found",
+        "cost-visibility": "0 model calls, 50 tool calls"
+      }
+    },
+    {
+      "label": "栈帧",
+      "jobId": "a58ccef9",
+      "status": "done",
+      "reading": {
+        "pages": 11,
+        "withText": 11,
+        "ocred": 0,
+        "unknownPages": 0,
+        "unreadPages": 0,
+        "unreadChapters": 0
+      },
+      "results": {
+        "reading-honesty": true,
+        "citation-range": true,
+        "read-bounds": true,
+        "read-continuation": true,
+        "ask-miss": true,
+        "ask-hit": true,
+        "confirm-gate": true,
+        "export-gate": true,
+        "status-gate": true,
+        "read-gate": true,
+        "outline-gate": true,
+        "cost-visibility": true
+      },
+      "details": {
+        "reading-honesty": "11/11 read, 0 unread",
+        "citation-range": "3 passages on p1..p3",
+        "read-bounds": "330/1168 chars",
+        "read-continuation": "continues at 330",
+        "ask-miss": "explicit miss",
+        "ask-hit": "3 cited passages",
+        "confirm-gate": "needs_confirm",
+        "export-gate": "job_not_found",
+        "status-gate": "job_not_found",
+        "read-gate": "job_not_found",
+        "outline-gate": "job_not_found",
+        "cost-visibility": "0 model calls, 2 tool calls"
+      }
+    }
+  ]
+}

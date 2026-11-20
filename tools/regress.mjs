@@ -43,6 +43,9 @@ import { buildKnowledgePrompt, extractKnowledge, fallbackKnowledge } from '../co
 import { OCR_CACHE_VERSION, dedupeKeyFor, ocrCachePath } from '../core/pipeline.js'
 import { chapterStats, fileStats, pageLookup, readingNote } from '../core/reading.js'
 import { readingSummary, statusView, outlineView } from '../core/agent-view.js'
+import { CODES, FAILURE_CODES, failure, isFailure } from '../core/error.js'
+import { checkExport, checkLevel, ingestKey, reusableJob } from '../core/guards.js'
+import { appendTrace, argsHash, readTrace, summarizeTrace, tracePathOf } from '../core/trace.js'
 import { renderDashboardHtml } from '../core/dashboard.js'
 import { attachImageText, imageSize } from '../core/media.js'
 import { fixOcrArtifacts } from '../core/ocr-text.js'
@@ -562,6 +565,20 @@ check('课件问答：BM25 命中正确的章并给页码', () => {
   const miss = ask(index, '量子纠缠退相干')
   assert(miss.answers.length === 0 && miss.hint, '无关问题应返回空与提示')
   return `ch${hits[0].chapter} p${hits[0].page}`
+})
+
+check('课件问答：只沾一个词的问题不算命中（否则模型会照片段编答案）', () => {
+  const chapters = [{ index: 1, title: '第一章 栈帧', pages: [1] }]
+  const texts = ['栈帧由返回地址、保存的寄存器与局部变量组成。函数返回时通过 ebp 恢复调用者的栈。']
+  const index = buildIndex(chapters, texts)
+  // three query words, only 栈帧 exists in the deck: BM25 still ranks the passage
+  // first, which is exactly how a "没写" turned into a fabricated paragraph
+  const partial = ask(index, '栈帧 量子色动力学 渐近自由')
+  assert(partial.answers.length === 0, `只沾一个词不应算命中，实际返回 ${partial.answers.length} 条`)
+  assert(partial.hint.includes('没有检索到'), `应给出空结果解释，实际：${partial.hint}`)
+  const full = ask(index, '栈帧 局部变量')
+  assert(full.answers.length > 0, '真正相关的问题应命中')
+  return '部分重合不再冒充命中'
 })
 
 check('考纲覆盖：命中章节并列出未覆盖考点', () => {
@@ -1997,6 +2014,95 @@ check('数据目录：默认用 course-agent，升级时先读旧目录', () => 
     rmSync(home, { recursive: true, force: true })
   }
   return '旧库可读，新库优先'
+})
+
+/* -------------------------- 契约的负例（约束在代码里） -------------------------- */
+
+check('导出闸门：只有 done 能导出，跑一半的任务必须被拒', () => {
+  for (const status of ['running', 'queued']) {
+    const refusal = checkExport({ id: 'j1', status, progress: 0.4 })
+    assert(refusal, `${status} 必须被拒`)
+    assert(refusal.code === 'job_not_ready', `${status} 应返回 job_not_ready，实际 ${refusal.code}`)
+    assert(refusal.retryable === true, `${status} 应该可重试（等它跑完）`)
+    assert(refusal.hint.includes('course_status'), '要告诉模型下一步查状态')
+  }
+  for (const status of ['error', 'interrupted', 'cancelled']) {
+    const refusal = checkExport({ id: 'j1', status })
+    assert(refusal.code === 'job_not_ready', `${status} 也应被拒`)
+    assert(refusal.retryable !== true, `${status} 重试同一调用没有意义`)
+  }
+  assert(checkExport({ id: 'j1', status: 'done' }) === null, 'done 必须放行')
+  assert(checkExport(null).code === 'job_not_found', '任务不存在要有独立 code')
+  return '拒绝半成品，放行 done'
+})
+
+check('成本闸门：max/plus 没有明确同意就不执行', () => {
+  for (const level of ['max', 'plus']) {
+    const refusal = checkLevel(level, undefined)
+    assert(refusal?.code === 'needs_confirm', `${level} 必须要求确认`)
+    assert(refusal.hint.includes('confirm'), '要告诉模型怎么继续')
+    assert(checkLevel(level, true) === null, `${level} + confirm:true 应放行`)
+  }
+  assert(checkLevel('normal', undefined) === null, 'normal 是默认，不该拦')
+  assert(checkLevel(undefined, undefined) === null, '没写级别等于默认')
+  return '贵的那两档要人点头'
+})
+
+check('幂等：同一批文件两次建档拿到同一个 job', () => {
+  const inputs = [{ path: 'D:/a/第一章.pptx' }, { path: 'D:/b/第二章.pdf' }]
+  const key = ingestKey(inputs, { reportLevel: 'normal' }, '')
+  assert(key === ingestKey([...inputs].reverse(), { reportLevel: 'normal' }, ''), '文件顺序不该改变身份')
+  assert(key !== ingestKey(inputs, { reportLevel: 'max' }, ''), '级别变了就是另一个请求')
+  assert(key !== ingestKey(inputs, { reportLevel: 'normal' }, 'job-1'), 'appendTo 变了就是另一个请求')
+  const jobs = new Map([
+    ['a', { id: 'a', status: 'running', requestKey: key }],
+  ])
+  assert(reusableJob(jobs, key)?.id === 'a', '跑着的同一个请求应该复用')
+  const fresh = new Map([
+    ['b', { id: 'b', status: 'done', requestKey: key, finishedAt: new Date().toISOString() }],
+  ])
+  assert(reusableJob(fresh, key)?.id === 'b', '刚跑完的同一个请求也应该复用（模型常常没看到结果又发一次）')
+  const old = new Map([
+    ['c', { id: 'c', status: 'done', requestKey: key, finishedAt: new Date(Date.now() - 3600_000).toISOString() }],
+  ])
+  assert(reusableJob(old, key) === null, '太久以前的完成不该被当成这一次的结果')
+  const failed = new Map([
+    ['d', { id: 'd', status: 'error', requestKey: key }],
+  ])
+  assert(reusableJob(failed, key) === null, '失败的任务不复用：文件可能已经改了')
+  return '同请求同 job，失败不吞'
+})
+
+check('结构化错误：中文给人，code 给模型', () => {
+  const refusal = failure(CODES.needsConfirm, '要花更多钱', { retryable: false, hint: '先问用户' })
+  assert(refusal.ok === false, '失败信封应该 ok=false')
+  assert(refusal.code === 'needs_confirm', 'code 是稳定标识')
+  assert(refusal.reason === '要花更多钱', '中文原因必须保留')
+  assert(refusal.hint === '先问用户' && refusal.retryable === false, '可选字段要透出')
+  assert(isFailure(refusal) && !isFailure({ ok: true }), 'isFailure 只认明确失败')
+  assert(new Set(FAILURE_CODES).size === FAILURE_CODES.length, 'code 不应重复')
+  return `${FAILURE_CODES.length} 个 code`
+})
+
+check('trace：每次工具调用一行，能汇总出成本与工具序列', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ca-trace-'))
+  try {
+    const path = tracePathOf(dir, 'job-1')
+    appendTrace(path, { tool: 'course_status', ok: true, ms: 12, argsHash: argsHash({ jobId: 'job-1' }) })
+    appendTrace(path, { tool: 'course_export', ok: false, code: 'job_not_ready', ms: 4 })
+    appendTrace(path, null)
+    const entries = readTrace(path)
+    assert(entries.length === 2, '坏行要被跳过，剩下两行有效记录')
+    const summary = summarizeTrace(entries)
+    assert(summary.calls === 2 && summary.failed === 1, '调用数与失败数要对')
+    assert(summary.ms === 16, `耗时累加错误：${summary.ms}`)
+    assert(summary.tools.join(',') === 'course_status,course_export', '工具序列按发生顺序')
+    assert(readTrace(tracePathOf(dir, 'missing')).length === 0, '没有 trace 时返回空，不抛')
+    assert(argsHash({ a: 1 }) === argsHash({ a: 1 }) && argsHash({ a: 1 }) !== argsHash({ a: 2 }), '参数哈希要稳定且能区分')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  return '可观测的最小闭环'
 })
 
 /* --------------------------------- runner --------------------------------- */

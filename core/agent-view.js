@@ -12,6 +12,7 @@
  */
 
 import { readingNote } from './reading.js'
+import { summarizeTrace } from './trace.js'
 
 /** Hard caps for every agent-facing payload. Prompted by real prompts getting fat. */
 export const LIMITS = {
@@ -102,10 +103,30 @@ export function readingSummary(job) {
 }
 
 /**
+ * What the run cost. `modelCalls` is the number that explains a long run; the
+ * cache ratio explains a cheap one.
+ */
+export function costSummary(job) {
+  const t = job?.telemetry
+  if (!t) return null
+  const calls = Number(t.modelCalls) || 0
+  const hits = Number(t.cacheHits) || 0
+  return {
+    modelCalls: calls,
+    cacheHits: hits,
+    cacheRatio: calls + hits ? Math.round((hits / (calls + hits)) * 100) / 100 : null,
+    sourceChars: Number(t.sourceChars) || 0,
+    keptChars: Number(t.keptChars) || 0,
+    ms: Number(t.ms) || null,
+  }
+}
+
+/**
  * Progress view. Answers "how far, what broke, what next" and nothing else —
  * chapter bodies and summaries belong to course_read / course_outline.
+ * `extra.trace` is the job's tool trace, when the caller has one.
  */
-export function statusView(job) {
+export function statusView(job, extra = {}) {
   const chapters = list(job.chapters)
   const summarized = chapters.filter((c) => c.summary && !c.summary.offline).length
   const offline = chapters.filter((c) => c.summary?.offline).length
@@ -132,6 +153,10 @@ export function statusView(job) {
     warnings: [...derived, ...warnings].slice(0, LIMITS.maxWarnings).map(String),
     warningsTotal: warnings.length + derived.length,
     ocr: ocrSummary(job),
+    // what this run has spent so far, and what the agent has already called:
+    // without these, "why is this slow / expensive" is unanswerable
+    cost: costSummary(job),
+    tools: extra.trace ? summarizeTrace(extra.trace) : undefined,
     elapsedMs: Number(job.elapsedMs) || null,
     error: job.error || '',
     reportPath: job.reportPath || '',
@@ -181,6 +206,7 @@ export function outlineView(job) {
     warnings: list(job.warnings).slice(0, LIMITS.maxWarnings).map(String),
     ocr: ocrSummary(job),
     telemetry: job.telemetry || null,
+    cost: costSummary(job),
     reportPath: job.reportPath || '',
     next: { tool: 'course_read', hint: '选一章 course_read 读正文；要定位具体说法用 course_ask' },
   }

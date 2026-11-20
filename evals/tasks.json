@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "note": "One entry per graded behaviour. `deck` decides which course it runs on; a deck is supplied by --deck label=path. Tasks are selected with --only family or --only id.",
+  "tasks": [
+    {
+      "id": "reading-honesty",
+      "family": "reading",
+      "check": "readingHonesty",
+      "why": "数过页才算读过：没读到的页必须出现在 warnings 里，未知页不能算成缺页"
+    },
+    {
+      "id": "citation-range",
+      "family": "citation",
+      "check": "citation",
+      "why": "讲解引用的页码必须落在该章页码范围里；引到不存在的页就是编"
+    },
+    {
+      "id": "read-bounds",
+      "family": "bounds",
+      "check": "bounds",
+      "maxChars": 400,
+      "why": "一次 read 不能超过承诺的字数，也不能静默丢掉后半章"
+    },
+    {
+      "id": "read-continuation",
+      "family": "bounds",
+      "check": "citation",
+      "why": "续读用 nextOffset，保证同一章可以分段读完而不是重复同一段"
+    },
+    {
+      "id": "ask-miss",
+      "family": "qa",
+      "check": "miss",
+      "query": "量子色动力学 的 渐近自由 证明",
+      "why": "问课件里没有的东西，必须返回空 answers + 解释，不能编一段原文"
+    },
+    {
+      "id": "ask-hit",
+      "family": "qa",
+      "check": "bounds",
+      "query": "补码",
+      "why": "能答的问题要给出带章号页码的片段；这条只查返回结构而不是内容对错"
+    },
+    {
+      "id": "confirm-gate",
+      "family": "gate",
+      "check": "gate",
+      "level": "max",
+      "why": "max/plus 更贵：没有 confirm:true 必须拒绝，而不是在描述里劝一句"
+    },
+    {
+      "id": "export-gate",
+      "family": "gate",
+      "check": "structured",
+      "call": "export",
+      "jobId": "no-such-job",
+      "code": "job_not_found",
+      "why": "拿不存在的 job 导出必须是结构化拒绝，模型才能据此换 jobId"
+    },
+    {
+      "id": "status-gate",
+      "family": "gate",
+      "check": "structured",
+      "call": "status",
+      "jobId": "no-such-job",
+      "code": "job_not_found",
+      "why": "状态查询的失败也要有 code，不能只有一句中文"
+    },
+    {
+      "id": "read-gate",
+      "family": "gate",
+      "check": "structured",
+      "call": "read",
+      "jobId": "no-such-job",
+      "chapter": 1,
+      "code": "job_not_found",
+      "why": "读正文的失败同样要可分支"
+    },
+    {
+      "id": "outline-gate",
+      "family": "gate",
+      "check": "structured",
+      "call": "outline",
+      "jobId": "no-such-job",
+      "code": "job_not_found",
+      "why": "目录查询的失败同样要可分支"
+    },
+    {
+      "id": "cost-visibility",
+      "family": "reading",
+      "check": "bounds",
+      "why": "status 必须透出本轮模型调用/缓存命中，否则慢和贵都无从解释"
+    }
+  ]
+}

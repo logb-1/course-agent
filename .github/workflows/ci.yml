@@ -43,6 +43,10 @@ jobs:
         run: npm install --no-save --no-audit --no-fund schemastery@^3.18.0
       - name: Unit regressions (synthetic fixtures only)
         run: node tools/regress.mjs --unit --strict
+      # The tool surface and its refusals: an installed plugin that fails here
+      # would let a model export a half-built course or pay for max twice.
+      - name: Agent contract (tool surface + negative constraints)
+        run: node tools/agent-contract.mjs
       - name: Client loader contract
         run: node tools/client-contract.mjs
       - name: End-to-end pipeline (fake model, no network)

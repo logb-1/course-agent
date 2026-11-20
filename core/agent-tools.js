@@ -6,27 +6,63 @@
  * verb per tool, explicit parameters, bounded returns, and a `next` field that
  * names the tool to call after this one.
  *
- * Two rules hold for everything here:
+ * Three rules hold for everything here:
  *   • nothing blocks for minutes — ingest returns a jobId, the model polls;
  *   • no tool returns more than a screenful — chapter text is paged by
- *     `offset`, reports are previewed and exported to a path.
+ *     `offset`, reports are previewed and exported to a path;
+ *   • failures are structured (code/retryable/hint), because a model cannot
+ *     branch on a Chinese sentence, and every call lands in the job's trace so
+ *     "why was that slow" has an answer.
  *
  * `api` is the courseAgent service provided by index.js, which is also
  * what the HTTP panel uses.
  */
 
 import { LIMITS } from './agent-view.js'
+import { CODES, failure } from './error.js'
+import { argsHash } from './trace.js'
 
 const text = (value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }]
 const output = (schema) => ({ schema, render: (_args, value) => text(value) })
 const OUT = output({ type: 'object', additionalProperties: true })
 
-const fail = (reason) => ({ ok: false, reason: String(reason || '操作失败') })
-
 /** Standard envelope so the model can branch on ok without guessing. */
 const done = (value) => ({ ok: true, ...(value && typeof value === 'object' ? value : { value }) })
-/** The api returns a view on success and `{ok:false, reason}` on failure. */
+/** The api returns a view on success and `{ok:false, code}` on failure. */
 const wrap = (value) => (value && value.ok === false ? value : done(value))
+
+const INTERNAL_HINT = '同一个调用重试一次通常能过；连续失败就 course_health 自检，再把 reason 原文告诉用户'
+
+/**
+ * Run one tool body: convert a thrown error into a structured failure, time it,
+ * and append one line to the job trace. Never throws — a tool that throws gives
+ * the model nothing to reason about.
+ */
+async function run(api, name, args, body) {
+  const started = Date.now()
+  let result
+  try {
+    result = await body()
+  } catch (error) {
+    result = failure(CODES.internal, error?.message || String(error), { hint: INTERNAL_HINT })
+  }
+  const ms = Date.now() - started
+  try {
+    const jobId =
+      String(args?.jobId || '') || (typeof result?.jobId === 'string' ? result.jobId : '')
+    api.noteToolCall?.(jobId, {
+      at: new Date().toISOString(),
+      tool: name,
+      argsHash: argsHash(args),
+      ok: result?.ok !== false,
+      code: result?.ok === false ? result.code : undefined,
+      ms,
+    })
+  } catch {
+    // a trace failure must never fail the call
+  }
+  return result
+}
 
 export const TOOL_NAMES = [
   'course_health',
@@ -58,12 +94,8 @@ export function registerCourseTools(ctx, api) {
       '每个会话第一次用课程助手前调用一次；返回 ok=false 时不要继续建档，先说明缺什么。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output: OUT,
-    async execute() {
-      try {
-        return done(await api.health())
-      } catch (error) {
-        return fail(error?.message || error)
-      }
+    async execute(args = {}) {
+      return wrap(await run(api, 'course_health', args, () => api.health()))
     },
   })
 
@@ -72,14 +104,17 @@ export function registerCourseTools(ctx, api) {
     description:
       '建档：把课件（pptx/pdf/docx/md/txt，也可 .ppt/.doc/.xls）解析成章节目录、分章知识点和报告。' +
       `异步：立刻返回 jobId，之后用 course_status 轮询，不要在这里等。一次最多 ${LIMITS.maxFiles} 个文件、单个 ≤60MB。` +
-      'reportLevel 默认 normal（便宜）；max=复习资料、plus=冲刺五册都明显更贵，用户没有明确要求就不要升。' +
-      '给已有课程追加课件用 appendTo（传原 jobId），未变的章节命中缓存不重算。',
+      'reportLevel 默认 normal（便宜）；max=复习资料、plus=冲刺五册都明显更贵，用户没有明确要求就不要升——' +
+      '这些级别必须带 confirm: true 才会执行，否则返回 code=needs_confirm。' +
+      '给已有课程追加课件用 appendTo（传原 jobId），未变的章节命中缓存不重算。' +
+      '同一批文件、同一级别重复调用会返回同一个 jobId（reused=true），不要以为出错而再建一次。',
     parameters: {
       type: 'object',
       properties: {
         files: { type: 'array', items: { type: 'string' }, description: '课件路径（绝对路径或相对当前工作目录）' },
         appendTo: { type: 'string', description: '已有课程的 jobId：把 files 追加到这门课' },
         reportLevel: { type: 'string', enum: ['normal', 'max', 'plus'], description: '报告深度，默认 normal' },
+        confirm: { type: 'boolean', description: '用户明确同意 max/plus 的额外成本时传 true' },
         withVideos: { type: 'boolean', description: '是否检索 B 站网课，默认 true' },
         days: { type: 'number', description: 'PLUS：复习天数 1-60' },
         target: { type: 'number', description: 'PLUS：目标分 30-100' },
@@ -89,18 +124,14 @@ export function registerCourseTools(ctx, api) {
     },
     output: OUT,
     async execute(args = {}) {
-      try {
-        return wrap(await api.ingest(args))
-      } catch (error) {
-        return fail(error?.message || error)
-      }
+      return wrap(await run(api, 'course_ingest', args, () => api.ingest(args)))
     },
   })
 
   add({
     name: 'course_status',
     description:
-      '查询任务进度：状态、阶段、章节完成数、失败章节、警告、OCR 覆盖，以及 next（下一步该调哪个工具）。' +
+      '查询任务进度：状态、阶段、章节完成数、失败章节、警告、OCR 覆盖、本轮已花的模型调用/缓存命中/工具序列，以及 next（下一步该调哪个工具）。' +
       '返回 status=running 就继续等（间隔 5–15 秒），done 后去 course_outline；不要重复 course_ingest。',
     parameters: {
       type: 'object',
@@ -110,11 +141,7 @@ export function registerCourseTools(ctx, api) {
     },
     output: OUT,
     async execute(args = {}) {
-      try {
-        return wrap(await api.status(args.jobId))
-      } catch (error) {
-        return fail(error?.message || error)
-      }
+      return wrap(await run(api, 'course_status', args, () => api.status(args.jobId)))
     },
   })
 
@@ -134,11 +161,7 @@ export function registerCourseTools(ctx, api) {
     },
     output: OUT,
     async execute(args = {}) {
-      try {
-        return wrap(await api.outline(args.jobId, args.syllabus))
-      } catch (error) {
-        return fail(error?.message || error)
-      }
+      return wrap(await run(api, 'course_outline', args, () => api.outline(args.jobId, args.syllabus)))
     },
   })
 
@@ -160,11 +183,11 @@ export function registerCourseTools(ctx, api) {
     },
     output: OUT,
     async execute(args = {}) {
-      try {
-        return wrap(await api.read(args.jobId, args.chapter, { offset: args.offset, maxChars: args.maxChars }))
-      } catch (error) {
-        return fail(error?.message || error)
-      }
+      return wrap(
+        await run(api, 'course_read', args, () =>
+          api.read(args.jobId, args.chapter, { offset: args.offset, maxChars: args.maxChars }),
+        ),
+      )
     },
   })
 
@@ -185,11 +208,7 @@ export function registerCourseTools(ctx, api) {
     },
     output: OUT,
     async execute(args = {}) {
-      try {
-        return wrap(await api.ask(args.jobId, args.question, args.topK))
-      } catch (error) {
-        return fail(error?.message || error)
-      }
+      return wrap(await run(api, 'course_ask', args, () => api.ask(args.jobId, args.question, args.topK)))
     },
   })
 
@@ -197,7 +216,7 @@ export function registerCourseTools(ctx, api) {
     name: 'course_export',
     description:
       '导出成果并给出文件路径：md=报告全文路径（附预览）、pdf=排版好的 PDF、csv=Anki 卡片、json=给其他插件读的结构化课程。' +
-      '用户要「发我 / 保存 / 打印」时用它，然后把 path 告诉用户。',
+      '只有 status=done 的任务能导出（否则 code=job_not_ready）；用户要「发我 / 保存 / 打印」时用它，然后把 path 告诉用户。',
     parameters: {
       type: 'object',
       properties: {
@@ -209,11 +228,7 @@ export function registerCourseTools(ctx, api) {
     },
     output: OUT,
     async execute(args = {}) {
-      try {
-        return wrap(await api.export(args.jobId, args.format))
-      } catch (error) {
-        return fail(error?.message || error)
-      }
+      return wrap(await run(api, 'course_export', args, () => api.export(args.jobId, args.format)))
     },
   })
 
@@ -227,11 +242,7 @@ export function registerCourseTools(ctx, api) {
     },
     output: OUT,
     async execute(args = {}) {
-      try {
-        return wrap(await api.library(args.limit))
-      } catch (error) {
-        return fail(error?.message || error)
-      }
+      return wrap(await run(api, 'course_library', args, () => api.library(args.limit)))
     },
   })
 
@@ -246,11 +257,7 @@ export function registerCourseTools(ctx, api) {
     },
     output: OUT,
     async execute(args = {}) {
-      try {
-        return wrap(await api.cancel(args.jobId))
-      } catch (error) {
-        return fail(error?.message || error)
-      }
+      return wrap(await run(api, 'course_cancel', args, () => api.cancel(args.jobId)))
     },
   })
 

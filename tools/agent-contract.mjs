@@ -143,6 +143,19 @@ check('ingest names the next tool', ingest.ok === true && ingest.next?.tool === 
 
 const jobId = ingest.jobId
 
+// The same request twice is one job: a model that missed the answer must not
+// pay for a second course.
+const again = await call('course_ingest', { files: [deck], reportLevel: 'normal', withVideos: false })
+check('the same files twice reuse the same job', again.ok === true && again.jobId === jobId && again.reused === true, JSON.stringify(again).slice(0, 200))
+
+// A costly level is a user decision, so the tool must refuse without consent.
+const costly = await call('course_ingest', { files: [deck], reportLevel: 'max', withVideos: false })
+check('max without confirm is refused, not merely hinted', costly.ok === false && costly.code === 'needs_confirm' && typeof costly.hint === 'string')
+check('a refused expensive run creates no job', (await call('course_library', { limit: 20 })).jobs.filter((row) => row.courseTitle || row.id).length >= 1 && !('jobId' in costly))
+
+const missingExport = await call('course_export', { jobId: 'no-such-job', format: 'csv' })
+check('export of an unknown job is a structured refusal', missingExport.ok === false && missingExport.code === 'job_not_found' && typeof missingExport.hint === 'string')
+
 // wait for the run to settle, then exercise the read path
 let status = await call('course_status', { jobId })
 const deadline = Date.now() + 20000
@@ -152,6 +165,7 @@ while (status.ok && status.status === 'running' && Date.now() < deadline) {
 }
 check('status reaches a settled state', status.ok === true && ['done', 'error', 'cancelled', 'interrupted'].includes(status.status), status.ok ? status.status : status.reason)
 check('status carries reading stats so gaps cannot hide', status.ok === true && (status.reading === null || ['pages', 'withText', 'ocred', 'unreadPages', 'unreadChapters'].every((k) => typeof status.reading[k] === 'number')))
+check('status reports what the run cost and called', status.ok === true && 'cost' in status && typeof status.tools?.calls === 'number', JSON.stringify(status.tools || null).slice(0, 120))
 
 if (status.ok && status.status === 'running') {
   const cancelled = await call('course_cancel', { jobId })
