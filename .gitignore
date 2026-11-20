@@ -1,0 +1,30 @@
+# generated reports and user course material stay local
+samples/
+# plugin runtime data (when dataDir is pointed here)
+data/
+node_modules/
+# test / render scratch
+.tmp*
+.dsh-office-*
+*.tmp
+*.log
+pnpm-lock.yaml
+# playwright output (the baseline snapshots under tests/ ARE committed)
+test-results/
+playwright-report/
+# nightly runner token (never committed)
+.nightly-token
+*.tgz
+# web product: local runs, virtualenv, secrets, python caches
+server-run/
+server/.venv/
+server/.env
+__pycache__/
+.pytest_cache/
+*.pyc
+
+pytest-of-*/
+# benchmark output: regenerate with tools/bench/*
+tools/bench/results.json
+# stray pip build scratch dirs
+pip-*/

@@ -1,0 +1,75 @@
+{
+  "name": "dsh-course-assistant",
+  "version": "1.19.0",
+  "private": false,
+  "type": "module",
+  "description": "课件 → 目录 · 导图 · 分章讲义 · 出题判分 · 复习排期，以 agent 工具面运行在 DeepSeek Harness 上",
+  "author": "logb-1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/logb-1/course-agent.git"
+  },
+  "homepage": "https://github.com/logb-1/course-agent#readme",
+  "bugs": {
+    "url": "https://github.com/logb-1/course-agent/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "agent",
+    "course",
+    "exam-prep",
+    "slides",
+    "pptx",
+    "pdf",
+    "ocr",
+    "bilibili",
+    "study-notes"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "core/*.js",
+    "core/*.ps1",
+    "core/*.py",
+    "bin/*.mjs",
+    "assets/fonts/*",
+    "locale/*.json",
+    "icon.svg",
+    "preset/*",
+    "skills",
+    "docs/*.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
+  },
+  "dependencies": {
+    "pdfkit": "^0.20.2",
+    "schemastery": "^3.18.0"
+  }
+}

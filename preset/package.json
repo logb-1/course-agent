@@ -1,0 +1,15 @@
+{
+  "name": "dsh-course-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "课程助教 agent preset（P0）：为 dsh-course-assistant 提供人设与标准工作流",
+  "type": "module",
+  "exports": {
+    ".": "./tutor.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

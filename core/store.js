@@ -1,0 +1,452 @@
+/**
+ * Local store: uploads, jobs, reports and a small TTL cache.
+ *
+ * Everything stays on this machine: no account data, no database. The default
+ * root is `<DSH_HOME>/course-assistant` (override with the plugin config's
+ * `dataDir`), so a workspace stays clean.
+ */
+import {
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  existsSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import { join, extname } from 'node:path'
+import { homedir } from 'node:os'
+
+/** 任务本体文件名：8 位十六进制 id + .json（排除 index.json / <id>.index.json）。 */
+const JOB_FILE = /^[0-9a-f]{8}\.json$/i
+
+export function resolveDataDir(configured) {
+  if (configured) return configured
+  const home = process.env.DSH_HOME || join(homedir(), '.dsh')
+  return join(home, 'course-assistant')
+}
+
+function ensure(dir) {
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+function atomicWrite(path, text) {
+  const tmp = `${path}.${process.pid}.tmp`
+  writeFileSync(tmp, text, 'utf8')
+  renameSync(tmp, path)
+}
+
+export function createStore(dataDir) {
+  const uploadsDir = ensure(join(dataDir, 'uploads'))
+  const reportsDir = ensure(join(dataDir, 'reports'))
+  const jobsDir = ensure(join(dataDir, 'jobs'))
+  const jobIndexPath = join(jobsDir, 'index.json')
+  const historyPath = join(dataDir, 'history.json')
+  const ocrDir = ensure(join(dataDir, 'ocr'))
+  const knowledgeDir = ensure(join(dataDir, 'knowledge'))
+  const cachePath = join(dataDir, 'cache.json')
+  const uploadsIndexPath = join(uploadsDir, 'index.json')
+
+  /** uploadId → { name, path, sha256, bytes, createdAt, lastUsedAt } */
+  let uploadsIndex = null
+  const loadIndex = () => {
+    if (uploadsIndex) return uploadsIndex
+    try {
+      uploadsIndex = JSON.parse(readFileSync(uploadsIndexPath, 'utf8')) || {}
+    } catch {
+      uploadsIndex = {}
+    }
+    return uploadsIndex
+  }
+  const saveIndex = () => {
+    try {
+      atomicWrite(uploadsIndexPath, JSON.stringify(uploadsIndex || {}))
+    } catch {}
+  }
+
+  let cacheData = null
+  const loadCache = () => {
+    if (cacheData) return cacheData
+    try {
+      cacheData = JSON.parse(readFileSync(cachePath, 'utf8'))
+    } catch {
+      cacheData = {}
+    }
+    return cacheData
+  }
+  let saveTimer = null
+  const scheduleSave = () => {
+    if (saveTimer) return
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      try {
+        atomicWrite(cachePath, JSON.stringify(cacheData || {}))
+      } catch {}
+    }, 500)
+    saveTimer.unref?.()
+  }
+
+  function knowledgePath(hash) {
+    return join(knowledgeDir, `${String(hash).replace(/[^a-z0-9_-]/gi, '')}.json`)
+  }
+
+  function readKnowledge(hash) {
+    try {
+      return JSON.parse(readFileSync(knowledgePath(hash), 'utf8'))
+    } catch {
+      return null
+    }
+  }
+
+  function writeKnowledge(hash, value) {
+    try {
+      atomicWrite(knowledgePath(hash), JSON.stringify(value))
+    } catch {}
+  }
+
+  function readHistory() {
+    try {
+      const list = JSON.parse(readFileSync(historyPath, 'utf8'))
+      return Array.isArray(list) ? list : []
+    } catch {
+      return []
+    }
+  }
+
+  /** Append a finished job to the "recent" list the panel shows. */
+  function rememberHistory(job) {
+    if (!job?.id) return
+    try {
+      const entry = {
+        id: job.id,
+        courseTitle: job.courseTitle || '未命名课程',
+        createdAt: job.createdAt || new Date().toISOString(),
+        chapters: Array.isArray(job.chapters) ? job.chapters.length : 0,
+        files: (job.files || []).map((file) => file?.name).filter(Boolean).slice(0, 3),
+        reportPath: job.reportPath || '',
+        dashboardPath: job.dashboardPath || '',
+        status: 'done',
+      }
+      const list = readHistory().filter((item) => item.id !== entry.id)
+      list.unshift(entry)
+      atomicWrite(historyPath, JSON.stringify(list.slice(0, 100)))
+    } catch {}
+  }
+
+  function listHistory(limit = 20) {
+    return readHistory().slice(0, Math.max(1, Math.min(100, Number(limit) || 20)))
+  }
+
+  function readJobIndex() {
+    try {
+      return JSON.parse(readFileSync(jobIndexPath, 'utf8'))
+    } catch {
+      return {}
+    }
+  }
+
+  /** Reuse a finished job when the same files were analysed with the same settings. */
+  function findReusableJob(key) {
+    if (!key) return null
+    const entry = readJobIndex()[key]
+    if (!entry?.id) return null
+    const job = readJob(entry.id)
+    return job && job.status === 'done' && job.reportPath ? job : null
+  }
+
+  function rememberJobKey(key, jobId) {
+    if (!key) return
+    try {
+      const index = readJobIndex()
+      index[key] = { id: jobId, at: Date.now() }
+      atomicWrite(jobIndexPath, JSON.stringify(index))
+    } catch {}
+  }
+
+  function forgetJobKey(jobId) {
+    try {
+      const index = readJobIndex()
+      let changed = false
+      for (const [key, value] of Object.entries(index)) {
+        if (value?.id === jobId) {
+          delete index[key]
+          changed = true
+        }
+      }
+      if (changed) atomicWrite(jobIndexPath, JSON.stringify(index))
+    } catch {}
+  }
+
+  return {
+    rememberHistory,
+    listHistory,
+    findReusableJob,
+    rememberJobKey,
+    forgetJobKey,
+    readKnowledge,
+    writeKnowledge,
+    dataDir,
+    uploadsDir,
+    reportsDir,
+    jobsDir,
+    ocrDir,
+
+    cache: {
+      async get(key) {
+        const entry = loadCache()[key]
+        if (!entry) return null
+        if (entry.exp && entry.exp < Date.now()) {
+          delete loadCache()[key]
+          scheduleSave()
+          return null
+        }
+        return entry.value
+      },
+      async set(key, value, ttlMs) {
+        loadCache()[key] = { value, exp: ttlMs ? Date.now() + ttlMs : 0 }
+        scheduleSave()
+      },
+      flush() {
+        if (cacheData) {
+          try {
+            atomicWrite(cachePath, JSON.stringify(cacheData))
+          } catch {}
+        }
+      },
+      /** Drop expired entries and cap the file so it cannot grow forever. */
+      prune(maxEntries = 500) {
+        const data = loadCache()
+        const now = Date.now()
+        let changed = false
+        for (const [key, entry] of Object.entries(data)) {
+          if (entry?.exp && entry.exp < now) {
+            delete data[key]
+            changed = true
+          }
+        }
+        const keys = Object.keys(data)
+        if (keys.length > maxEntries) {
+          // soonest-expiring first; entries without an expiry sort last (kept)
+          const ordered = keys.sort(
+            (a, b) => (data[a]?.exp || Number.MAX_SAFE_INTEGER) - (data[b]?.exp || Number.MAX_SAFE_INTEGER),
+          )
+          for (const key of ordered.slice(0, keys.length - maxEntries)) delete data[key]
+          changed = true
+        }
+        if (changed) {
+          try {
+            atomicWrite(cachePath, JSON.stringify(data))
+          } catch {}
+        }
+        return changed
+      },
+    },
+
+    saveUpload(buf, fileName) {
+      const safeName = String(fileName || 'file').replace(/[\\/:*?"<>|]/g, '_').slice(-120)
+      const hash = createHash('sha256').update(buf).digest('hex').slice(0, 16)
+      const id = `${Date.now().toString(36)}-${hash}`
+      const path = join(uploadsDir, `${id}${extname(safeName).toLowerCase()}`)
+      writeFileSync(path, buf)
+      const record = { id, name: safeName, path, bytes: buf.length, sha256: hash, createdAt: Date.now(), lastUsedAt: Date.now() }
+      loadIndex()[id] = record
+      saveIndex()
+      return record
+    },
+
+    /** Look up an upload after a restart (the in-memory map is gone). */
+    findUpload(id) {
+      const record = loadIndex()[id]
+      if (!record) return null
+      if (!existsSync(record.path)) return { ...record, missing: true }
+      return record
+    },
+
+    /** Mark uploads as still in use so pruning cannot delete a live job's input. */
+    touchUploads(ids = []) {
+      const index = loadIndex()
+      let changed = false
+      for (const id of ids) {
+        if (index[id]) {
+          index[id].lastUsedAt = Date.now()
+          changed = true
+        }
+      }
+      if (changed) saveIndex()
+    },
+
+    readOcr(file) {
+      try {
+        // whole payload: page OCR stores {pages}, image OCR stores {text}
+        return JSON.parse(readFileSync(join(ocrDir, file), 'utf8'))
+      } catch {
+        return null
+      }
+    },
+    writeOcr(file, payload) {
+      try {
+        atomicWrite(join(ocrDir, file), JSON.stringify(payload))
+        return true
+      } catch {
+        return false
+      }
+    },
+
+    saveJob(job) {
+      try {
+        atomicWrite(join(jobsDir, `${job.id}.json`), JSON.stringify(job))
+      } catch {}
+    },
+
+    /** Passage list for local Q&A (kept out of the job JSON: it is large). */
+    saveSearchIndex(id, passages) {
+      try {
+        atomicWrite(join(jobsDir, `${id}.index.json`), JSON.stringify({ passages }))
+        return true
+      } catch {
+        return false
+      }
+    },
+
+    loadSearchIndex(id) {
+      try {
+        const data = JSON.parse(readFileSync(join(jobsDir, `${id}.index.json`), 'utf8'))
+        return Array.isArray(data?.passages) ? data.passages : null
+      } catch {
+        return null
+      }
+    },
+
+    /** A chapter rerun only replaces that chapter's passages. */
+    patchSearchIndex(id, chapterIndex, passages) {
+      const current = this.loadSearchIndex(id) || []
+      const next = [...current.filter((row) => row.chapter !== chapterIndex), ...passages]
+      next.sort((a, b) => a.chapter - b.chapter)
+      return this.saveSearchIndex(id, next)
+    },
+
+    loadJob(id) {
+      try {
+        return JSON.parse(readFileSync(join(jobsDir, `${id}.json`), 'utf8'))
+      } catch {
+        return null
+      }
+    },
+
+    /** Remove a job record and, when given, the report files it produced. */
+    deleteJob(id, job = null) {
+      try {
+        rmSync(join(jobsDir, `${id}.json`), { force: true })
+      } catch {}
+      try {
+        rmSync(join(jobsDir, `${id}.index.json`), { force: true })
+      } catch {}
+      if (job) {
+        for (const file of [job.reportPath, job.pdfPath]) {
+          if (!file) continue
+          try {
+            rmSync(file, { force: true })
+          } catch {}
+        }
+      }
+    },
+
+    /** Reports are the deliverable: keep them for a while, not forever. */
+    pruneReports(days = 90) {
+      const cutoff = Date.now() - days * 86400000
+      try {
+        for (const name of readdirSync(reportsDir)) {
+          const file = join(reportsDir, name)
+          if (statSync(file).mtimeMs < cutoff) rmSync(file, { force: true })
+        }
+      } catch {}
+    },
+
+    listJobs(limit = 20) {
+      try {
+        return readdirSync(jobsDir)
+          // 任务文件是 `<8 位十六进制>.json`；index.json 是去重索引，
+          // `<id>.index.json` 是该任务的文本检索索引，都不是任务本体。
+          .filter((n) => JOB_FILE.test(n))
+          .map((n) => {
+            const p = join(jobsDir, n)
+            return {
+              id: n.replace(/\.json$/, ''),
+              mtime: statSync(p).mtimeMs,
+            }
+          })
+          .sort((a, b) => b.mtime - a.mtime)
+          .slice(0, limit)
+      } catch {
+        return []
+      }
+    },
+
+    writeReport(baseName, markdown) {
+      const safe = String(baseName || 'report').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)
+      const stem = `${safe}-${new Date().toISOString().slice(0, 10)}`
+      let path = join(reportsDir, `${stem}.md`)
+      let n = 1
+      while (existsSync(path)) path = join(reportsDir, `${stem}-${n++}.md`)
+      writeFileSync(path, markdown, 'utf8')
+      return path
+    },
+
+    /** One sidecar file of a multi-book report (PLUS 的 01…05 册). */
+    writeReportVariant(baseName, suffix, markdown) {
+      const safe = String(baseName || 'report').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)
+      const label = String(suffix || 'book').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)
+      const stem = `${safe}-${new Date().toISOString().slice(0, 10)}-${label}`
+      let path = join(reportsDir, `${stem}.md`)
+      let n = 1
+      while (existsSync(path)) path = join(reportsDir, `${stem}-${n++}.md`)
+      writeFileSync(path, markdown, 'utf8')
+      return path
+    },
+
+    writeDashboard(baseName, html) {
+      const safe = String(baseName || 'report').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)
+      const stem = `${safe}-${new Date().toISOString().slice(0, 10)}`
+      let path = join(reportsDir, `${stem}-dashboard.html`)
+      let n = 1
+      while (existsSync(path)) path = join(reportsDir, `${stem}-dashboard-${n++}.html`)
+      writeFileSync(path, html, 'utf8')
+      return path
+    },
+
+    writeBytes(path, bytes) {
+      writeFileSync(path, bytes)
+      return path
+    },
+
+    /** Drop uploads older than N days, honouring "still referenced by a job". */
+    pruneUploads(days = 7) {
+      const cutoff = Date.now() - days * 86400000
+      const index = loadIndex()
+      const keep = new Set()
+      try {
+        for (const [id, record] of Object.entries(index)) {
+          const stamp = Math.max(record.lastUsedAt || 0, record.createdAt || 0)
+          if (stamp < cutoff) {
+            rmSync(record.path, { force: true })
+            delete index[id]
+          } else {
+            keep.add(record.path)
+          }
+        }
+        // files written before the index existed: fall back to mtime
+        for (const name of readdirSync(uploadsDir)) {
+          if (name === 'index.json') continue
+          const p = join(uploadsDir, name)
+          if (statSync(p).mtimeMs < cutoff && !keep.has(p)) rmSync(p, { force: true })
+        }
+        saveIndex()
+      } catch {}
+    },
+  }
+}
+
+export const newJobId = () => randomUUID().slice(0, 8)

@@ -1,0 +1,179 @@
+/**
+ * Windows OCR engine: WinRT renders the page, Windows.Media.Ocr reads it.
+ * The work happens in `ocr.ps1`; no extra binary, no network, ~1s per page.
+ */
+import { spawn } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const SCRIPT = join(HERE, 'ocr.ps1')
+
+function recognize(pdfPath, options = {}) {
+  // `pages` is a 1-based subset chosen by triage; without it read 1..maxPages
+  const wanted = Array.isArray(options.pages)
+    ? options.pages.filter((n) => Number.isInteger(n) && n > 0).slice(0, 400)
+    : null
+  const maxPages = Math.max(1, Math.min(400, options.maxPages || 60))
+  const scratch = mkdtempSync(join(tmpdir(), 'dsh-ocr-'))
+  mkdirSync(scratch, { recursive: true })
+  // WinRT's GetFileFromPathAsync only accepts native Windows separators
+  const nativePdf = String(pdfPath).replace(/\//g, '\\')
+  const nativeScratch = scratch.replace(/\//g, '\\')
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      SCRIPT,
+      '-Pdf',
+      nativePdf,
+      '-OutDir',
+      nativeScratch,
+      '-Width',
+      String(options.width ?? 1600),
+    ]
+    if (options.lang) args.push('-Lang', String(options.lang))
+    if (Array.isArray(options.langs) && options.langs.length > 1) args.push('-Langs', options.langs.join(','))
+    if (options.lines) args.push('-Lines')
+    if (wanted?.length) args.push('-Pages', wanted.join(','))
+    else args.push('-First', '0', '-Last', String(maxPages - 1))
+    const child = spawn('powershell.exe', args, { windowsHide: true })
+    let buffer = ''
+    let stderr = ''
+    const pages = []
+    let total = 0
+
+    const handleLine = (line) => {
+      const trimmed = line.trim()
+      if (!trimmed) return
+      let msg
+      try {
+        msg = JSON.parse(trimmed)
+      } catch {
+        return
+      }
+      if (msg.error) {
+        reject(new Error(`OCR 引擎不可用：${msg.error}`))
+        return
+      }
+      if (typeof msg.pageCount === 'number') {
+        total = wanted?.length || Math.min(msg.pageCount, maxPages)
+        return
+      }
+      if (typeof msg.page === 'number') {
+        const lines = Array.isArray(msg.lines)
+          ? msg.lines.map((row) => ({
+              text: String(row.text || ''),
+              x: Number(row.x) || 0,
+              y: Number(row.y) || 0,
+              w: Number(row.w) || 0,
+              h: Number(row.h) || 0,
+            }))
+          : null
+        const variants = Array.isArray(msg.results)
+          ? msg.results.map((row) => ({
+              lang: String(row.lang || ''),
+              text: String(row.text || ''),
+              lines: Array.isArray(row.lines)
+                ? row.lines.map((line) => ({
+                    text: String(line.text || ''),
+                    x: Number(line.x) || 0,
+                    y: Number(line.y) || 0,
+                    w: Number(line.w) || 0,
+                    h: Number(line.h) || 0,
+                  }))
+                : null,
+            }))
+          : null
+        pages.push({ index: msg.page, title: '', text: msg.text || '', lines, variants })
+        options.onProgress?.(pages.length, total || pages.length)
+      }
+    }
+
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString('utf8')
+      let index
+      while ((index = buffer.indexOf('\n')) >= 0) {
+        handleLine(buffer.slice(0, index))
+        buffer = buffer.slice(index + 1)
+      }
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8')
+    })
+    child.on('error', (error) => {
+      rmSync(scratch, { recursive: true, force: true })
+      reject(error)
+    })
+    child.on('close', (code) => {
+      if (buffer.trim()) handleLine(buffer)
+      rmSync(scratch, { recursive: true, force: true })
+      if (code !== 0 && !pages.length) {
+        reject(new Error(`OCR 失败（exit ${code}）：${stderr.slice(-300) || '无输出'}`))
+        return
+      }
+      resolve(pages)
+    })
+
+    options.signal?.addEventListener('abort', () => {
+      child.kill()
+      reject(new Error('OCR 已取消'))
+    })
+  })
+}
+
+
+function recognizeImage(imagePath, options = {}) {
+  const native = String(imagePath).replace(/\//g, '\\')
+  return new Promise((resolve, reject) => {
+    const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT, '-Image', native]
+    if (options?.preprocess === false) args.push('-NoPreprocess')
+    const child = spawn('powershell.exe', args, {
+      windowsHide: true,
+    })
+    let buffer = ''
+    let stderr = ''
+    let text = ''
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString('utf8')
+      let index
+      while ((index = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, index).trim()
+        buffer = buffer.slice(index + 1)
+        if (!line) continue
+        try {
+          const msg = JSON.parse(line)
+          if (msg.error) reject(new Error(`OCR 引擎不可用：${msg.error}`))
+          else if (typeof msg.text === 'string') text = msg.text
+        } catch {}
+      }
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8')
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code !== 0 && !text) {
+        reject(new Error(`图片 OCR 失败（exit ${code}）：${stderr.slice(-200) || '无输出'}`))
+        return
+      }
+      resolve(text)
+    })
+  })
+}
+
+export default {
+  id: 'windows',
+  label: 'Windows OCR（WinRT）',
+  platform: 'win32',
+  available: () => process.platform === 'win32',
+  availableSync: () => process.platform === 'win32',
+  recognize,
+  recognizeImage,
+}
