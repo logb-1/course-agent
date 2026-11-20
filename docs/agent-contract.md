@@ -192,18 +192,24 @@ node tools/agent-contract.mjs             # 35 条契约断言：工具面形状
 node tools/client-contract.mjs            # 网页面板与工具的槽位契约
 node tools/e2e-fake.mjs                   # 假模型跑通整条管线
 node evals/run.mjs --fixture              # 12 项行为评测（合成课件，CI 每天都跑）
+node evals/talk.mjs --self-test           # 讲解判分器自证：grounded 过、编页码/假引用/沉默缺页 拒
 ```
 
-前四条在 `.github/workflows/ci.yml`，行为评测在 `.github/workflows/nightly.yml`（真实课件路径不入库）。
+前四条在 `.github/workflows/ci.yml`，后两条也在（`--fixture` 与 `--self-test` 都不需要真实课件或模型）；真实课件的行为评测在 `.github/workflows/nightly.yml` 由人工触发（课件路径不入库）。
 
 手动核对一次真实课件（本仓库常用样本 `实验3-面向对象编程&函数式编程.pptx`，56 页）：
 `status.reading` 应为 `{pages:56, withText:56, ocred:0, unknownPages:0, unreadPages:0, unreadChapters:0}`；
 再用 `node evals/run.mjs --deck "实验3=<path>"` 对比 `evals/baseline.json`，应报 `matches baseline`。
 
+讲解另有一条半自动通道：`node evals/talk.mjs --answers <answers.json>` 判「引的页存不存在、声称照抄的是否真在原文、缺页是否说明、长度」；
+`--live` 可让一个 OpenAI 兼容模型用同一份正文作答后打分（需要密钥，不进 CI）。判据与人工 1–5 分表见 `evals/README.md`。
+
 ## 下一步
 
 - P1 已完成：工具表单一真相（`core/tool-spec.js`）、按预设收窄注册、页码级溯源（`[pN]`）、
   注入边界（`<source_text>` + 数据非指令声明）、persona/SKILL 版本化。
+- P1.5 已完成「讲解的**可判定部分**」：`evals/quality.mjs` 判页码归属、逐字引用、缺页说明、长度；
+  `evals/talk.mjs --self-test` 自证判分器，`--answers` 给真实会话的讲解打分。
 - P2（记忆）：目标分、已读章节、错题落 `dsh-storage-domain`，经 `ctx.variables` 注入当前课程。
-- 仍缺的一条：**讲解质量没有回归**。`evals/` 里判的都是可判定事实（读取诚实度、页码范围、边界、闸门、结构化错误），
-  「讲得好不好」需要真实模型 + 人评；在补上之前，改 persona/提示词只保证不破坏事实性，不保证更好懂。
+- 仍缺的一条：**讲得好不好没有机器判据**。结构、贴原文的程度、能否复述，只在 `evals/README.md` 的人工评分表里；
+  改 persona/提示词后应抽 10 章按表打分，而不是看单次回答的印象。

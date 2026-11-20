@@ -241,21 +241,21 @@ server/.venv/Scripts/python -m uvicorn app.main:app --app-dir server --port 8099
 ## 开发与验证
 
 ```bash
-node tools/regress.mjs --unit --strict      # 77 项，任何机器可跑，缺夹具即失败
+node tools/regress.mjs --unit --strict      # 78 项，任何机器可跑，缺夹具即失败
 node tools/agent-contract.mjs               # 35 项：工具面契约 + 三条负例 + 预设作用域
 node tools/client-contract.mjs              # Client 槽位与 key 契约
 node tools/e2e-fake.mjs                     # 假模型端到端
 node evals/run.mjs --fixture                # 12 项行为评测（合成课件，无需真实课件）
+node evals/talk.mjs --self-test             # 讲解判分器自证（编页码/假引用/沉默缺页必须被拒）
+node evals/talk.mjs --answers answers.json  # 给真实会话的讲解打分
 node tools/bench/ocr-bench.mjs              # OCR 基准，结果落到 tools/bench/results.json
 npx playwright test                         # 视觉回归（需带 token 的 DSH_WEB_URL）
 server/.venv/Scripts/python -m pytest server/tests -q   # 11 项
 ```
 
-CI 在 Windows + Ubuntu 双矩阵上跑 unit、契约、Client 契约与假模型端到端，并校验 npm tarball 清单——`files`
-白名单漏文件（`preset/`、`skills/` 这类）是别人装了却用不了的经典原因，这一关专门防它。
-行为评测单独在 `nightly.yml` 里跑：它不测「讲得好不好」（那需要真模型和人），只测程序能证明的部分——
-读取统计是否诚实、引用页码是否落在本章范围、闸门是否真的拒绝、`ask` 问不到时是否空手而归。
-判据与 baseline 见 [`evals/README.md`](evals/README.md)。
+CI 在 Windows + Ubuntu 双矩阵上跑 unit、契约、Client 契约、假模型端到端、合成课件的十二项行为评测，以及讲解判分器的自证；并校验 npm tarball 清单——`files` 白名单漏文件（`preset/`、`skills/` 这类）是别人装了却用不了的经典原因，这一关专门防它。
+讲解质量只测「可判定的那一半」：引的页存不存在、声称照抄的句子在不在原文、缺页有没有说、长度是否像一段讲解。
+结构、贴原文的程度、能否复述，仍然只有人能给分，评分表在 [`evals/README.md`](evals/README.md)。
 
 ---
 

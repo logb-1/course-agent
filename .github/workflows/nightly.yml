@@ -24,3 +24,5 @@ jobs:
         run: node tools/agent-contract.mjs
       - name: Behaviour evals (synthetic deck)
         run: node evals/run.mjs --fixture
+      - name: Explanation graders (self-test)
+        run: node evals/talk.mjs --self-test

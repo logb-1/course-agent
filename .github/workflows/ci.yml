@@ -51,6 +51,14 @@ jobs:
         run: node tools/client-contract.mjs
       - name: End-to-end pipeline (fake model, no network)
         run: node tools/e2e-fake.mjs
+      # Behaviour, not wiring: the fixture deck exercises reading honesty,
+      # citation ranges, gates and cost visibility without any real courseware.
+      - name: Behaviour evals (fixture deck)
+        run: node evals/run.mjs --fixture
+      # The quality graders grade explanations, so they need their own proof:
+      # a grounded answer must pass, a fabricated page must fail.
+      - name: Explanation graders (self-test)
+        run: node evals/talk.mjs --self-test
 
   package:
     runs-on: ubuntu-latest
