@@ -90,6 +90,12 @@
       "family": "reading",
       "check": "bounds",
       "why": "status 必须透出本轮模型调用/缓存命中，否则慢和贵都无从解释"
+    },
+    {
+      "id": "memory-roundtrip",
+      "family": "memory",
+      "check": "memory",
+      "why": "用户说过的目标与进度必须写下来并能读回；同一门课换会话不该重问"
     }
   ]
 }

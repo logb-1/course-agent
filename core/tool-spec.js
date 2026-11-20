@@ -157,6 +157,69 @@ export const TOOL_SPECS = [
     },
     call: (api, args) => api.cancel(args.jobId),
   },
+  {
+    name: 'course_recall',
+    effect: 'read',
+    description:
+      '这门课已经记住的东西：目标分 / 剩余天数 / 每日分钟、已讲进度（read→explained→quizzed）、最近错题、关联的 jobId。' +
+      '新会话、用户说「接着上次」「还是那门课」、或准备出题与排期前先调用它，不要重新盘问用户已经答过的目标。' +
+      '没有记忆时返回 course=null 与 known 列表：按提示先 course_ingest 建档，不要凭空编一个目标分。',
+    parameters: {
+      type: 'object',
+      properties: {
+        course: { type: 'string', description: '课程名（或 id）；省略时用最近活跃的那门课' },
+        jobId: { type: 'string', description: '用它定位课程（等于该任务的课程名）' },
+        mistakes: { type: 'number', description: '最近错题条数，默认 5，上限 20' },
+      },
+      additionalProperties: false,
+    },
+    call: (api, args) => api.recall(args),
+  },
+  {
+    name: 'course_note',
+    effect: 'write',
+    description:
+      '把用户刚说的目标与进度记下来，跨会话保留：goal（days/target/minutes/level/note）、chapter + state（read/explained/quizzed）、' +
+      'mistake（错题：chapter/page/question/note/tag）、clearMistakes。' +
+      '用户说「还剩 3 天」「目标 80 分」「第 3 章讲完了」「这题我又错了」时立刻记，不要只在对话里答应——下次会话没人记得。' +
+      '只记用户说过或任务本身已有的信息（天数/目标/分钟/级别），不要替用户猜。',
+    parameters: {
+      type: 'object',
+      properties: {
+        course: { type: 'string', description: '课程名（或 id）；给了 jobId 时可省略' },
+        jobId: { type: 'string', description: '任务 id，用来确定课程' },
+        goal: {
+          type: 'object',
+          description: '目标：days（1–365）/ target（0–750）/ minutes（0–1440）/ level（normal|max|plus）/ note',
+          additionalProperties: false,
+          properties: {
+            days: { type: 'number' },
+            target: { type: 'number' },
+            minutes: { type: 'number' },
+            level: { type: 'string', enum: ['normal', 'max', 'plus'] },
+            note: { type: 'string' },
+          },
+        },
+        chapter: { type: 'number', description: '章号（从 course_outline 来）' },
+        state: { type: 'string', enum: ['read', 'explained', 'quizzed'], description: '该章进度，默认 explained' },
+        mistake: {
+          type: 'object',
+          description: '一条错题，至少给 question 或 note',
+          additionalProperties: false,
+          properties: {
+            chapter: { type: 'number' },
+            page: { type: 'number' },
+            question: { type: 'string' },
+            note: { type: 'string' },
+            tag: { type: 'string' },
+          },
+        },
+        clearMistakes: { type: 'boolean', description: '清空这门课的错题本' },
+      },
+      additionalProperties: false,
+    },
+    call: (api, args) => api.note(args),
+  },
 ]
 
 export const TOOL_NAMES = TOOL_SPECS.map((spec) => spec.name)

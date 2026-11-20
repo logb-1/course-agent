@@ -24,6 +24,8 @@ const EXPECTED = [
   'course_export',
   'course_library',
   'course_cancel',
+  'course_recall',
+  'course_note',
 ]
 
 let failures = 0
@@ -103,7 +105,7 @@ check('service exposes registerTools for the preset scope', typeof service0?.reg
 
 // The preset calls this from its own fiber; here we emulate that call.
 const disposers = service0?.registerTools?.(ctx) || []
-check('registerTools returns disposers', Array.isArray(disposers) && disposers.length === 9, String(disposers.length))
+check('registerTools returns disposers', Array.isArray(disposers) && disposers.length === 11, String(disposers.length))
 
 /* ------------------------------- surface ------------------------------- */
 
@@ -137,7 +139,7 @@ check('course_ingest takes no required params (files are validated at call time)
 
 const service = provided.get('courseAgent')
 check('provides courseAgent to other plugins', !!service)
-check('service exposes the same 9 verbs', !!service && ['health', 'ingest', 'status', 'outline', 'read', 'ask', 'export', 'library', 'cancel'].every((k) => typeof service[k] === 'function'))
+check('service exposes the same 11 verbs', !!service && ['health', 'ingest', 'status', 'outline', 'read', 'ask', 'export', 'library', 'cancel', 'recall', 'note'].every((k) => typeof service[k] === 'function'))
 
 const call = (name, args) => registered.get(name).execute(args)
 
@@ -217,6 +219,52 @@ if (status.ok && status.status === 'done' && status.reportPath) {
   check('done job wrote its report', exists)
 }
 
+/* -------------------------------- memory -------------------------------- */
+
+const unknownRecall = await call('course_recall', { course: '不存在的课' })
+check(
+  'recall for an unknown course lists what it knows instead of inventing one',
+  unknownRecall.ok === true && unknownRecall.course === null && typeof unknownRecall.hint === 'string',
+  JSON.stringify(unknownRecall).slice(0, 160),
+)
+
+const noted = await call('course_note', {
+  course: '绪论',
+  goal: { days: 3, target: 80 },
+  chapter: 1,
+  state: 'explained',
+  mistake: { chapter: 1, question: '补码与反码的区别', note: '混了' },
+})
+check(
+  'note writes goal, progress and one mistake',
+  noted.ok === true &&
+    noted.applied?.goal?.days === 3 &&
+    noted.applied?.chapter?.state === 'explained' &&
+    noted.applied?.mistake?.question === '补码与反码的区别',
+  JSON.stringify(noted).slice(0, 200),
+)
+
+const recalled = await call('course_recall', { course: '绪论' })
+check(
+  'recall returns what note wrote, across a rebuild of the service',
+  recalled.ok === true &&
+    recalled.course?.title === '绪论' &&
+    recalled.goal?.target === 80 &&
+    recalled.mistakes?.total === 1 &&
+    recalled.mistakes?.recent?.[0]?.question === '补码与反码的区别',
+  JSON.stringify(recalled).slice(0, 200),
+)
+
+const nothing = await call('course_note', { course: '绪论' })
+check('note with nothing to write is a bad_request', nothing.ok === false && nothing.code === 'bad_request')
+
+const memoryLine = status.ok ? status.memory : undefined
+check(
+  'status carries a compact memory line once the course is known',
+  !memoryLine || (typeof memoryLine.courseId === 'string' && typeof memoryLine.progress?.touched === 'number'),
+  JSON.stringify(memoryLine),
+)
+
 /* ----------------------------- preset realm ----------------------------- */
 
 // The narrowing only holds if the preset half actually registers the tools when
@@ -238,7 +286,7 @@ try {
   const tutor = await import('../preset/tutor.js')
   tutor.apply(presetCtx)
   check(
-    'mounted preset registers the nine tools in its own scope',
+    'mounted preset registers all course tools in its own scope',
     EXPECTED.every((name) => registered.has(name)),
     [...registered.keys()].join(','),
   )
@@ -249,7 +297,7 @@ try {
   }
   check('unloading the preset removes its tools', registered.size === 0, [...registered.keys()].join(','))
 } catch (error) {
-  check('mounted preset registers the nine tools in its own scope', false, String(error?.message || error))
+  check('mounted preset registers all course tools in its own scope', false, String(error?.message || error))
 }
 
 /* ------------------------------- teardown ------------------------------- */

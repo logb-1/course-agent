@@ -1,6 +1,6 @@
 {
   "name": "course-agent",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": false,
   "type": "module",
   "description": "课程 agent：课件 → 目录 → 分章讲义 → 出题判分 → 复习排期，九个原子工具 + 可溯源的读取统计",

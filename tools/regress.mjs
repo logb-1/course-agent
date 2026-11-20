@@ -46,6 +46,7 @@ import { readView, readingSummary, statusView, outlineView } from '../core/agent
 import { CODES, FAILURE_CODES, failure, isFailure } from '../core/error.js'
 import { checkExport, checkLevel, ingestKey, reusableJob } from '../core/guards.js'
 import { appendTrace, argsHash, readTrace, summarizeTrace, tracePathOf } from '../core/trace.js'
+import { CHAPTER_STATES, LIMITS as MEMORY_LIMITS, courseIdFrom, createMemory, mergeGoal, normalizeMistake } from '../core/memory.js'
 import { renderDashboardHtml } from '../core/dashboard.js'
 import { attachImageText, imageSize } from '../core/media.js'
 import { fixOcrArtifacts } from '../core/ocr-text.js'
@@ -2132,8 +2133,65 @@ check('预设的 inject 只能是数组（对象形式会让挂载等一个叫 r
   return 'Cordis 把对象声明读成 名字→配置，误写成 required/optional 会永久 pending'
 })
 
-/* --------------------------------- runner --------------------------------- */
-const selected = checks.filter(({ group }) => (ONLY_UNIT ? group === 'unit' : ONLY_REAL ? group === 'real' : true))
+check('记忆：同一课件永远同一门课，目标被夹在合理范围', () => {
+  assert(courseIdFrom('实验3 面向对象') === courseIdFrom('  实验3   面向对象 '), '标题规范化后应稳定')
+  assert(courseIdFrom('') === '', '空标题没有 id')
+  const goal = mergeGoal({}, { days: 9999, target: 1200, minutes: -5, level: 'plus', note: 'x'.repeat(500) })
+  assert(goal.days === 365 && goal.target === 750 && goal.minutes === 0, `目标没夹住：${JSON.stringify(goal)}`)
+  assert(goal.level === 'plus' && goal.note.length === MEMORY_LIMITS.noteChars, '级别保留、备注截断')
+  const cleared = mergeGoal({ days: 3 }, { days: 'soon' })
+  assert(cleared.days === undefined, '写成 soon 的天数应删掉，而不是留旧值')
+  assert(normalizeMistake({ chapter: 2, question: '  ' }) === null, '没有问题的错题丢掉')
+  return '猜不出来就不猜'
+})
+
+check('记忆：目标 / 进度 / 错题能往返，坏的输入被丢掉', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ca-memory-'))
+  try {
+    const memory = createMemory({ dataDir: dir, now: () => '2026-01-01T00:00:00.000Z' })
+    assert(memory.recall('').ok === false, '空记忆不能假装有一门课')
+    const course = memory.upsert({ title: '栈帧' })
+    assert(course?.id === courseIdFrom('栈帧'), 'id 由标题决定')
+    memory.setGoal(course.id, { days: 3, target: 80, level: 'normal' })
+    memory.markChapter(course.id, 2, 'read')
+    memory.markChapter(course.id, 2, 'explained')
+    memory.markChapter(course.id, 2, 'read') // 进度只前进，不回退
+    memory.addMistake(course.id, { chapter: 2, page: 9, question: '动静态绑定' })
+    memory.addMistake(course.id, { chapter: 2, page: 9, question: '动静态绑定' })
+    memory.addMistake(course.id, {})
+    const first = memory.recall('栈')
+    assert(first.ok && first.course.title === '栈帧', '片段能定位到唯一一门课')
+    assert(first.goal.target === 80 && first.goal.days === 3, '目标被记住')
+    assert(first.progress.chapters[0].state === 'explained', '进度不回退')
+    assert(first.mistakes.total === 1, '同一条错题只留一份')
+    // 新实例 = 新会话：必须从磁盘读回来
+    const again = createMemory({ dataDir: dir })
+    const second = again.recall('栈帧')
+    assert(second.mistakes.recent[0].question === '动静态绑定', '落盘后可再读')
+    assert(existsSync(join(dir, 'memory.json')), '记忆就是 dataDir 下的一个小文件')
+    return 'goal / progress / 错题 三件都能跨会话'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+check('记忆：课程名有歧义时给候选，不猜', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ca-memory-amb-'))
+  try {
+    const memory = createMemory({ dataDir: dir })
+    memory.upsert({ title: '计算机系统 上' })
+    memory.upsert({ title: '计算机系统 下' })
+    const out = memory.recall('计算机系统')
+    assert(out.ok === false, '两门都像就不能挑一门')
+    assert(out.ambiguous.length === 2 && out.known.length === 2, '歧义列表与已知课程都要给')
+    assert(CHAPTER_STATES.join(',') === 'read,explained,quizzed', '进度状态是这三档')
+    return '歧义交给调用方决定'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/* --------------------------------- runner --------------------------------- */const selected = checks.filter(({ group }) => (ONLY_UNIT ? group === 'unit' : ONLY_REAL ? group === 'real' : true))
 let failed = 0
 let skipped = 0
 

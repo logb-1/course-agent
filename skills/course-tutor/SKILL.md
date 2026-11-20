@@ -3,7 +3,7 @@ name: course-tutor
 description: 课程助教工作流。用户要学习/备考某门课、把课件转成讲义、讲解某一章、出题判分或排复习计划时使用；含原子工具的调用顺序、异步轮询、成本闸门与质量约束。
 ---
 
-<!-- skill/course-tutor v3 (2026-11-20)：加页码标记与「只在课程助教里出现」的说明；改措辞请同步 evals 并记录版本 -->
+<!-- skill/course-tutor v4 (2026-11-20)：加记忆（course_recall / course_note）与「一次只问一件」的衔接；改措辞请同步 evals 并记录版本 -->
 
 # 课程助教
 
@@ -19,7 +19,7 @@ description: 课程助教工作流。用户要学习/备考某门课、把课件
 
 ## 工具与顺序
 
-九个原子工具，**没有 action 参数**，一次一个动词。它们只在本预设的会话里可见——别的会话工具列表里没有 `course_*` 是设计如此（注册发生在预设作用域），不是加载失败：
+十一个原子工具，**没有 action 参数**，一次一个动词。它们只在本预设的会话里可见——别的会话工具列表里没有 `course_*` 是设计如此（注册发生在预设作用域），不是加载失败：
 
 | 工具 | 作用 | 关键参数 |
 | --- | --- | --- |
@@ -32,17 +32,20 @@ description: 课程助教工作流。用户要学习/备考某门课、把课件
 | `course_export` | 导出 md / pdf / csv / json | `jobId`、`format` |
 | `course_library` | 历史任务列表 | `limit` |
 | `course_cancel` | 取消运行中的任务 | `jobId` |
+| `course_recall` | 这门课记住了什么（目标/进度/错题） | `course` 或 `jobId`、（optional）`mistakes` |
+| `course_note` | 记下目标、进度、错题 | `goal`、`chapter`+`state`、`mistake`、`clearMistakes` |
 
 ## 标准流程
 
 1. **环境**：本会话首次 `course_health`。
-2. **建档**：`course_ingest`。它 1 秒内返回 `jobId` 和 `next` 提示——**不要**原地等它跑完。
-3. **等结果**：用 `course_status { jobId }` 轮询（10–60 秒一次；`max`/`plus` 更久）。`status` 到 `done` 再往下；`error` 把 `error` 原文告诉用户，别自己猜。
-4. **看目录**：`course_outline`。**先目录后正文**，不要一次读完所有章。
-5. **按章讲**：`course_read` 取该章原文（默认 6000 字，`truncated` 时用 `nextOffset` 续读），讲法：结论 → 3–5 个知识点 → 易错点 → 一个例子。需要精确出处再用 `course_ask`（带页码片段）。
-6. **检验**：每章 3–5 题，概念题与计算/代码题混合；用户作答后按课件原文判分并指出错因对应的知识点。
-7. **排期**：需要计划时用「第 N 天读哪章 / 做哪些题」的表格，或用 `course_ingest` 的 `days` / `target` / `minutes`（`plus`）。
-8. **收尾**：`course_export` 出 md / pdf，把路径给用户。
+2. **先问记忆**：`course_recall`（可不带参数，取最近活跃的课）。有目标就不要再问目标分和天数；返回 `course: null` 才建档。
+3. **建档**：`course_ingest`。它 1 秒内返回 `jobId` 和 `next` 提示——**不要**原地等它跑完。
+4. **等结果**：用 `course_status { jobId }` 轮询（10–60 秒一次；`max`/`plus` 更久）。`status` 到 `done` 再往下；`error` 把 `error` 原文告诉用户，别自己猜。
+5. **看目录**：`course_outline`。**先目录后正文**，不要一次读完所有章。
+6. **按章讲**：`course_read` 取该章原文（默认 6000 字，`truncated` 时用 `nextOffset` 续读），讲法：结论 → 3–5 个知识点 → 易错点 → 一个例子。需要精确出处再用 `course_ask`（带页码片段）。
+7. **检验**：每章 3–5 题，概念题与计算/代码题混合；用户作答后按课件原文判分并指出错因对应的知识点。
+8. **排期**：需要计划时用「第 N 天读哪章 / 做哪些题」的表格，或用 `course_ingest` 的 `days` / `target` / `minutes`（`plus`）。
+9. **收尾**：`course_export` 出 md / pdf，把路径给用户；把它记进记忆前先用 `course_note` 更新目标与进度。
 
 ## 质量底线
 
@@ -53,3 +56,4 @@ description: 课程助教工作流。用户要学习/备考某门课、把课件
 - **先读 `reading` 再讲**：`course_status.reading.unreadPages > 0` 或某章 `note` 非空时，开头先说一句「这章有 N 页没读到文字，依据可能不全」，再讲能读到的部分；不要把缺失当成内容少。
 - 任务还在 `running` 时不要导出、不要讲内容——先 `course_status`。
 - **一次只推进一章**，讲完问一句「继续，还是出题」。
+- 用户说「还剩 3 天」「目标 80 分」「这章讲完了」「这题又错了」时立刻 `course_note`；只在对话里答应等于没记，下次会话没人知道。

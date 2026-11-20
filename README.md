@@ -2,7 +2,7 @@
 
 > 一个会教课的 agent：把课件交给它，它会先把这叠纸读透，再问你要什么，然后按章讲、出题、判分、排期。
 
-它不是一个「上传文件 → 吐报告」的处理器。它是一个 agent：有九件工具、一套工作纪律、一条可被追问的
+它不是一个「上传文件 → 吐报告」的处理器。它是一个 agent：有十一件工具、一套工作纪律、一条可被追问的
 证据链。你问「第三章那个指针到底怎么算」，它会去课件里找到那一页，用那一页的原文回答，并告诉你页码；
 那一页是扫描件、没读出文字，它会直接说「这页没读到」，而不是编一段。
 
@@ -42,14 +42,14 @@
 npm i course-agent
 ```
 
-装完这一条，得到一个叫「课程助教」的预设和一个 `courseAgent` 服务。新建会话时选中这个预设，九件 `course_*` 工具才会出现在它手里——这是刻意的：工具只属于课程助教这个身份，别的会话不该背着九个用不上的工具定义。左侧栏的「课程助手」面板走同一套实现，两条入口不会分叉。
+装完这一条，得到一个叫「课程助教」的预设和一个 `courseAgent` 服务。新建会话时选中这个预设，十一件 `course_*` 工具才会出现在它手里——这是刻意的：工具只属于课程助教这个身份，别的会话不该背着十一个用不上的工具定义。左侧栏的「课程助手」面板走同一套实现，两条入口不会分叉。
 
 > 改源码后必须重载 Host（`remove_bundle` + `install_bundle`）：Node 的 ESM 模块在进程内缓存，
 > 只改文件不会热替换。Client 部分刷新页面即可。
 
 ---
 
-## 九件工具
+## 十一件工具
 
 工具名都带 `course_` 前缀，参数扁平、返回有界；长内容一律靠 `jobId` + 偏移续读，不整块灌进上下文。
 
@@ -64,6 +64,8 @@ npm i course-agent
 | `course_export` | `jobId` · `format` | 导出 `md` / `pdf` / `csv`(Anki) / `json` |
 | `course_library` | `limit` | 历史课程（最多 20 条）。用户没给 `jobId` 时先查这里 |
 | `course_cancel` | `jobId` | 取消正在跑的任务 |
+| `course_recall` | `course?` · `jobId?` · `mistakes` | 这门课记住了什么：目标分/剩余天数/进度/最近错题。新会话先说「接着上次」时先调它 |
+| `course_note` | `goal` · `chapter`+`state` · `mistake` · `clearMistakes` | 把用户说的目标、进度、错题记下来（<dataDir>/memory.json），下次会话不用重问 |
 
 契约细则（字段、状态机、`next` 约定）见 [docs/agent-contract.md](docs/agent-contract.md)。
 
@@ -245,7 +247,7 @@ node tools/regress.mjs --unit --strict      # 78 项，任何机器可跑，缺�
 node tools/agent-contract.mjs               # 35 项：工具面契约 + 三条负例 + 预设作用域
 node tools/client-contract.mjs              # Client 槽位与 key 契约
 node tools/e2e-fake.mjs                     # 假模型端到端
-node evals/run.mjs --fixture                # 12 项行为评测（合成课件，无需真实课件）
+node evals/run.mjs --fixture                # 13 项行为评测（合成课件，无需真实课件）
 node evals/talk.mjs --self-test             # 讲解判分器自证（编页码/假引用/沉默缺页必须被拒）
 node evals/talk.mjs --answers answers.json  # 给真实会话的讲解打分
 node tools/bench/ocr-bench.mjs              # OCR 基准，结果落到 tools/bench/results.json
@@ -285,6 +287,16 @@ course-agent/
 
 ---
 
+## 它记得你上次说到哪
+
+`<dataDir>/memory.json` 里只有三样东西：目标（目标分、剩余天数、每天分钟、级别）、每章进度（读过 / 讲过 / 测过）、错题本。
+
+用户说「还剩 3 天」「目标 80 分」「第 3 章讲完了」「这题我又错了」，agent 用 `course_note` 当场记下来；下次新建会话，`course_recall`（或 `course_status` 里那一行 `memory`）直接把这几行带回来，不必再问一遍。
+
+它不记正文——那是作业和检索索引的事；也不替你猜分数与考期，没说的就是没有。同名课程有歧义时（「计算机系统」对上「上」「下」两门），它返回候选让你挑，而不是默默选第一个。
+
+---
+
 ## 已知限制
 
 - **扫描件的公式与小数**仍不稳（`2.3` → `23`）。公式密集的页，讲解会提醒你对照原图。
@@ -294,6 +306,7 @@ course-agent/
   页码引用只在单份课件时可靠；多文件合并时报告会禁止写页码。
 - **B 站是关键词检索**，不是语义检索；对「研究汇报」型课件噪声明显，此时只给搜索链接。
 - **成本**：MAX 每章输出约为 Normal 的 3–5 倍；PLUS ≈ MAX。升档前它会先问你。
+- **记忆只记你说过的**：没声明目标分或天数，它就会问；猜一个错的考期，比问一句更糟。course_note { clearMistakes: true } 可清空错题本。
 - 单次最多 12 个文件、单文件 60 MB；上传保留 7 天，报告保留 90 天。
 - 不登录、不抓取任何 B 站账号信息；除 B 站公开搜索外不产生其他请求。
 

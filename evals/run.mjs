@@ -18,7 +18,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { gradeAsk, gradeBounds, gradeCitation, gradeCost, gradeGate, gradeMiss, gradeReadingHonesty, gradeStructured } from './grade.mjs'
+import { gradeAsk, gradeBounds, gradeCitation, gradeCost, gradeGate, gradeMemory, gradeMiss, gradeReadingHonesty, gradeStructured } from './grade.mjs'
 
 const HERE = new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
 const TASKS = JSON.parse(readFileSync(join(HERE, 'tasks.json'), 'utf8')).tasks
@@ -138,6 +138,15 @@ async function runDeck({ label, path }) {
     const statusGate = await call('course_status', { jobId: 'no-such-job' })
     const readGate = await call('course_read', { jobId: 'no-such-job', chapter: 1 })
     const outlineGate = await call('course_outline', { jobId: 'no-such-job' })
+    // What the user would say while looking at chapter one, then read it back.
+    const firstChapter = chapter?.chapter || 1
+    const noted = await call('course_note', {
+      jobId: ingest.jobId,
+      goal: { days: 3, target: 80 },
+      chapter: firstChapter,
+      state: 'explained',
+    })
+    const recalled = await call('course_recall', { jobId: ingest.jobId })
 
     const grade = {
       'reading-honesty': () => gradeReadingHonesty({ status, outline }),
@@ -152,6 +161,7 @@ async function runDeck({ label, path }) {
       'read-gate': () => gradeStructured({ refusal: readGate, code: 'job_not_found' }),
       'outline-gate': () => gradeStructured({ refusal: outlineGate, code: 'job_not_found' }),
       'cost-visibility': () => gradeCost({ status }),
+      'memory-roundtrip': () => gradeMemory({ noted, recalled, chapter: firstChapter }),
     }
 
     for (const task of selected) {

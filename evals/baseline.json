@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-20T09:50:13.313Z",
+  "generatedAt": "2026-11-20T10:30:51.713Z",
   "decks": [
     {
       "label": "实验3",
-      "jobId": "5295e9b8",
+      "jobId": "e7fef751",
       "status": "done",
       "reading": {
         "pages": 56,
@@ -26,13 +26,14 @@
         "status-gate": true,
         "read-gate": true,
         "outline-gate": true,
-        "cost-visibility": true
+        "cost-visibility": true,
+        "memory-roundtrip": true
       },
       "details": {
         "reading-honesty": "56/56 read, 0 unread",
         "citation-range": "2 passages on p2..p3",
-        "read-bounds": "400/1386 chars",
-        "read-continuation": "continues at 400",
+        "read-bounds": "386/1499 chars",
+        "read-continuation": "continues at 386",
         "ask-miss": "explicit miss",
         "ask-hit": "3 cited passages",
         "confirm-gate": "needs_confirm",
@@ -40,12 +41,13 @@
         "status-gate": "job_not_found",
         "read-gate": "job_not_found",
         "outline-gate": "job_not_found",
-        "cost-visibility": "0 model calls, 50 tool calls"
+        "cost-visibility": "0 model calls, 50 tool calls",
+        "memory-roundtrip": "remembered 实验三 StepbyStep"
       }
     },
     {
       "label": "栈帧",
-      "jobId": "a58ccef9",
+      "jobId": "bf2262fe",
       "status": "done",
       "reading": {
         "pages": 11,
@@ -67,13 +69,14 @@
         "status-gate": true,
         "read-gate": true,
         "outline-gate": true,
-        "cost-visibility": true
+        "cost-visibility": true,
+        "memory-roundtrip": true
       },
       "details": {
         "reading-honesty": "11/11 read, 0 unread",
         "citation-range": "3 passages on p1..p3",
-        "read-bounds": "330/1168 chars",
-        "read-continuation": "continues at 330",
+        "read-bounds": "377/1269 chars",
+        "read-continuation": "continues at 377",
         "ask-miss": "explicit miss",
         "ask-hit": "3 cited passages",
         "confirm-gate": "needs_confirm",
@@ -81,7 +84,8 @@
         "status-gate": "job_not_found",
         "read-gate": "job_not_found",
         "outline-gate": "job_not_found",
-        "cost-visibility": "0 model calls, 2 tool calls"
+        "cost-visibility": "0 model calls, 2 tool calls",
+        "memory-roundtrip": "remembered 栈帧专题_方法真题变式答案"
       }
     }
   ]

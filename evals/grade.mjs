@@ -121,3 +121,23 @@ export function gradeStructured({ refusal, code }) {
   if (typeof refusal.reason !== 'string' || !refusal.reason) return { ok: false, detail: 'no human reason' }
   return { ok: true, detail: `${refusal.code}${refusal.retryable ? ' (retryable)' : ''}` }
 }
+
+/**
+ * Memory round trip: what the user stated must come back in a later call, and
+ * progress must not walk backwards. This is the whole point of the file — if a
+ * second read cannot see the goal, the tutor will ask for it again.
+ */
+export function gradeMemory({ noted, recalled, chapter }) {
+  if (!noted || noted.ok !== true) return { ok: false, detail: `note failed: ${noted?.code || noted?.reason}` }
+  if (!recalled || recalled.ok !== true) return { ok: false, detail: `recall failed: ${recalled?.code || recalled?.reason}` }
+  if (recalled.goal?.days !== 3 || recalled.goal?.target !== 80) {
+    return { ok: false, detail: `goal not remembered: ${JSON.stringify(recalled.goal)}` }
+  }
+  const rows = recalled.progress?.chapters || []
+  const row = rows.find((entry) => entry.chapter === chapter)
+  if (!row || row.state !== 'explained') return { ok: false, detail: `chapter ${chapter} not marked explained: ${JSON.stringify(rows)}` }
+  if (!recalled.mistakes || recalled.mistakes.total !== 0) {
+    return { ok: true, detail: `remembered ${recalled.course?.title} (mistakes ${recalled.mistakes?.total})` }
+  }
+  return { ok: true, detail: `remembered ${recalled.course?.title}` }
+}

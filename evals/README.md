@@ -30,6 +30,7 @@ node evals/run.mjs --fixture --only gate
 | `confirm-gate` | `max/plus` 无 `confirm:true` → `needs_confirm` | 成本闸门写在描述里不算闸门 |
 | `export/status/read/outline-gate` | 未知 job → `job_not_found` + `hint` | 模型要靠 code 分支，不能靠中文猜 |
 | `cost-visibility` | `status.cost`（模型调用/缓存命中）与 `status.tools`（调用序列）存在 | 「慢」「贵」没有数字就只是感受 |
+| `memory-roundtrip` | 写下的目标（`days`/`target`）与章节进度能被 `course_recall` 原样读回 | 只在对话里答应等于没记，下次会话会重问一遍 |
 
 ## 不测什么
 

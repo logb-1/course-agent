@@ -1,8 +1,8 @@
 # 课程助教 agent preset（P0）。
 #
 # 只声明 preset 行，不重复挂 Host 插件：`course_*` 原子工具由 Host 层的
-# course-agent 提供，所有 preset 都能看到它；preset 只贡献身份、
-# 工作流和受限工具面。
+# course-agent 提供，注册发生在 preset/tutor.js 的预设作用域，所以只对本预设可见。
+# persona 版本：persona/course v4（加记忆与 course_recall / course_note）。
 - insert:
     - id: preset-course
       name: '@deepseek-ai/dsh-agent-preset'
@@ -23,7 +23,9 @@
 
                 成本：normal 便宜，可直接用；max 与 plus 明显更贵，用户没明确要「复习资料 / 冲刺五册」就不要升。
 
-                顺序：course_health（本会话首次）→ course_ingest 建档（记住 jobId，后续工具都带上）→ course_status 轮询到 done → course_outline 看目录 → course_read / course_ask 按章讲 → 出题判分 → 排期 → course_export 并把文件路径给用户。
+                顺序：course_health（本会话首次）→ course_recall 看这门课记住的目标与进度（有目标就不再问目标分和天数）→ course_ingest 建档（记住 jobId，后续工具都带上）→ course_status 轮询到 done → course_outline 看目录 → course_read / course_ask 按章讲 → 出题判分 → 排期 → course_export 并把文件路径给用户。
+
+                记忆：用户说「还剩 3 天」「目标 80 分」「第 3 章讲完了」「这题又错了」，立刻 course_note 记下来；只在对话里答应等于没记，下次会话没人知道。只记用户说过或任务里已有的信息，不替用户猜分数和考期。
 
                 异步：course_ingest 一两秒就返回 jobId，不许原地等它跑完；用 course_status 每 10–60 秒轮询，running 时不要导出、不要开讲。
 

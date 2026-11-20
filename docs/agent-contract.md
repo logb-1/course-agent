@@ -77,6 +77,8 @@
 | `course_export` | 导出 | `jobId`、`format`(md/pdf/csv/json) | `path`、`chars`、`preview` |
 | `course_library` | 历史 | `limit`(≤20) | `jobs[]{jobId,title,status,...}` |
 | `course_cancel` | 取消 | `jobId` | `cancelled: true/false` |
+| `course_recall` | 读记忆 | `course?`、`jobId?`、`mistakes`(≤20) | `course`、`goal`、`progress{done,touched,chapters}`、`mistakes{total,recent}`、`jobs`；没有则 `course: null` + `known` + `hint` |
+| `course_note` | 写记忆 | `course?`/`jobId?`、`goal{days,target,minutes,level,note}`、`chapter`+`state`、`mistake{chapter,page,question,note,tag}`、`clearMistakes` | `course`、`applied`、`next` |
 
 ## 工具表的单一真相
 
@@ -88,15 +90,27 @@
 
 `course_*` 不再全局注册。Host 层只提供 `courseAgent` 服务，注册发生在 `preset/tutor.js` 的预设作用域，
 所以其它会话（standard / ptc / cordis）的工具列表里没有它们——这是设计如此，不是装漏了。
-代价是普通会话里不能“顺手”建档；换来的是 9 个工具定义不再常驻每个会话的上下文，
+代价是普通会话里不能“顺手”建档；换来的是 11 个工具定义不再常驻每个会话的上下文，
 而且模型不会误以为自己随时能 `course_read`。
 
-`tools/agent-contract.mjs` 把这条钉成断言：Host 全局零个 `course_*`，挂载预设后九个，卸载后回到零。
+`tools/agent-contract.mjs` 把这条钉成断言：Host 全局零个 `course_*`，挂载预设后十一个，卸载后回到零。
 
 挂载失败的一个坑值得记下来：preset 插件的 `export const inject` **必须是数组**。Cordis 把对象声明读成
 `服务名 → 拦截配置`，写成 `{ required: [...], optional: [...] }` 会让预设去等两个叫 `required`、`optional` 的服务，
 于是永远停在 `waiting for required, optional`，输入区的预设列表里直接看不到它（那里只列未 broken 的预设）。
 可选依赖一律用 `ctx.get(name)` 读，不要塞进 `inject`。`tools/regress.mjs` 现在有一条断言守着这条（对象/数组都拦）。
+
+## 记忆：跨会话不再重问
+
+`<dataDir>/memory.json` 是这门课的唯一持久身份，和作业共用同一个数据目录（默认 `<DSH_HOME>/course-agent`）。作业第一次出现时按 `job.courseTitle` 挂到一门课上：标题规范化后取 sha1 前 8 位做 id，所以同一课件换 job、换会话、换版本还是同一门课；作业里已经声明过的 `days` / `target` / `minutes` / `reportLevel` 会写进 `goal`。
+
+- 记什么：`goal`、每章进度（`read` → `explained` → `quizzed`，只前进不回退）、错题（`chapter|page|question` 去重，单课上限 80）、最近 5 个 `jobId`。
+- 不记什么：正文（那是作业与检索索引的事）、用户没说的分数与考期。猜一个错的考试日期，比问一句更糟。
+- 上限：12 门课、每课 80 条错题、200 条进度；超出按 `updatedAt` 淘汰最旧的课。记忆不该长成第二个上下文问题。
+- 失败即降级：写盘失败只让 `course_note` 返回 `internal`，`course_read` / `course_status` 照常——记忆是便利，不是主链路。
+- 歧义不猜：`course_recall { course: "计算机系统" }` 命中两门课时返回 `course: null` + `ambiguous` + `known`，由调用方挑一门，而不是默默选第一个。
+
+`course_status` 因此多一行 `memory: { courseId, goal, progress{done,touched}, mistakes }`；`course_read` 成功时静默把该章标成 `read`。用户说「还剩 3 天」「目标 80 分」「第 3 章讲完了」「这题又错了」时，agent 应当立刻 `course_note`，而不是只在对话里答应。
 
 ## 作业状态机
 
@@ -187,11 +201,11 @@ SKILL 与 persona 都写了同一条要求：讲解写页号并落到 `[pN]` 上
 四条一起跑才算「没坏」：
 
 ```powershell
-node tools/regress.mjs --unit --strict    # 78 项单测：pipeline、闸门、幂等、trace、读取统计、页码标记
-node tools/agent-contract.mjs             # 35 条契约断言：工具面形状 + 三条负例 + cost/tools + 预设作用域
+node tools/regress.mjs --unit --strict    # 82 项单测：pipeline、闸门、幂等、trace、读取统计、页码标记、记忆
+node tools/agent-contract.mjs             # 40 条契约断言：工具面形状 + 三条负例 + cost/tools + 预设作用域 + 记忆往返
 node tools/client-contract.mjs            # 网页面板与工具的槽位契约
 node tools/e2e-fake.mjs                   # 假模型跑通整条管线
-node evals/run.mjs --fixture              # 12 项行为评测（合成课件，CI 每天都跑）
+node evals/run.mjs --fixture              # 13 项行为评测（合成课件，CI 每天都跑）
 node evals/talk.mjs --self-test           # 讲解判分器自证：grounded 过、编页码/假引用/沉默缺页 拒
 ```
 
@@ -210,6 +224,6 @@ node evals/talk.mjs --self-test           # 讲解判分器自证：grounded 过
   注入边界（`<source_text>` + 数据非指令声明）、persona/SKILL 版本化。
 - P1.5 已完成「讲解的**可判定部分**」：`evals/quality.mjs` 判页码归属、逐字引用、缺页说明、长度；
   `evals/talk.mjs --self-test` 自证判分器，`--answers` 给真实会话的讲解打分。
-- P2（记忆）：目标分、已读章节、错题落 `dsh-storage-domain`，经 `ctx.variables` 注入当前课程。
+- P2 已完成（2.2.0）：目标、章节进度、错题落在 `<dataDir>/memory.json`（`core/memory.js`），经 `course_recall` / `course_note` 与 `status.memory` 进出；没有再借 `dsh-storage-domain`——一个 340 行的小文件比一个跨插件的存储抽象更容易测、更容易迁移。
 - 仍缺的一条：**讲得好不好没有机器判据**。结构、贴原文的程度、能否复述，只在 `evals/README.md` 的人工评分表里；
   改 persona/提示词后应抽 10 章按表打分，而不是看单次回答的印象。

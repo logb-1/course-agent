@@ -32,6 +32,7 @@ import { registerCourseTools } from './core/agent-tools.js'
 import { CODES, failure } from './core/error.js'
 import { checkExport, checkLevel, ingestKey, reusableJob } from './core/guards.js'
 import { appendTrace, argsHash, readTrace, summarizeTrace, tracePathOf } from './core/trace.js'
+import { createMemory, rankOf } from './core/memory.js'
 
 const HERE = join(fileURLToPath(new URL('.', import.meta.url)))
 const PDF_FONT = join(HERE, 'assets', 'fonts', 'NotoSansSC-Regular.ttf')
@@ -209,6 +210,9 @@ function send(res, code, body, headers = {}) {
 
 export function apply(ctx, config = {}) {
   const store = createStore(resolveDataDir(config.dataDir))
+  // One small file beside the jobs: which course this is, what the user is
+  // aiming at, which chapters were already read, and the mistakes to re-ask.
+  const memory = createMemory({ dataDir: store.dataDir })
   store.pruneUploads(config.keepUploadsDays ?? 7)
   try {
     store.pruneReports(90)
@@ -799,6 +803,34 @@ export function apply(ctx, config = {}) {
   const jobOf = (id) => (id ? jobs.get(String(id)) || store.loadJob(String(id)) : null)
   const traceOf = (jobId) => tracePathOf(store.jobsDir, String(jobId))
 
+  // job → course id, computed at most once per job. Linking writes the file, so
+  // doing it on every status poll would mean a write per second; the course
+  // itself is re-read from disk so a goal noted a moment ago shows up at once.
+  const linkedCourses = new Map()
+  const ensureCourse = (job) => {
+    if (!job?.courseTitle) return null
+    const knownId = linkedCourses.get(job.id)
+    if (knownId) return memory.read().courses[knownId] || null
+    const existing = memory.list().find((course) => course.title === job.courseTitle && course.jobs.includes(job.id))
+    if (existing) {
+      linkedCourses.set(job.id, existing.id)
+      return existing
+    }
+    const course = memory.upsert({ title: job.courseTitle })
+    if (!course) return null
+    memory.noteJob(course.id, job.id)
+    // A job already knows the plan the user stated while it was created; the
+    // memory keeps it so the next session does not ask again.
+    const goal = {}
+    if (job.days) goal.days = job.days
+    if (job.target) goal.target = job.target
+    if (job.minutes) goal.minutes = job.minutes
+    if (job.reportLevel) goal.level = job.reportLevel
+    if (Object.keys(goal).length) memory.setGoal(course.id, goal)
+    linkedCourses.set(job.id, course.id)
+    return memory.read().courses[course.id] || course
+  }
+
   const agentApi = {
     async health() {
       return {
@@ -905,7 +937,23 @@ export function apply(ctx, config = {}) {
       if (!job) {
         return failure(CODES.jobNotFound, '任务不存在（jobId 写错了，或任务已被删除）', { hint: '用 course_library 找 jobId' })
       }
-      return statusView(job, { trace: readTrace(traceOf(job.id)) })
+      const view = statusView(job, { trace: readTrace(traceOf(job.id)) })
+      // Two lines of memory travel with every status: enough to stop the tutor
+      // from re-asking the goal, small enough to stay in context.
+      const course = ensureCourse(job)
+      if (course) {
+        const states = Object.values(course.progress || {})
+        view.memory = {
+          courseId: course.id,
+          goal: course.goal,
+          progress: {
+            done: states.filter((state) => rankOf(state) >= rankOf('explained')).length,
+            touched: states.length,
+          },
+          mistakes: Array.isArray(course.mistakes) ? course.mistakes.length : 0,
+        }
+      }
+      return view
     },
 
     outline(jobId, syllabusPath) {
@@ -962,6 +1010,14 @@ export function apply(ctx, config = {}) {
         return failure(CODES.badRequest, `第 ${chapter} 章没有正文（可用 course_outline 核对章号）`, {
           hint: 'course_outline 拿到真实章号后再读',
         })
+      }
+      // Reading a chapter is progress worth remembering — and it must never be
+      // the reason a read fails, so the write is best-effort.
+      const course = ensureCourse(job)
+      if (course) {
+        try {
+          memory.markChapter(course.id, chapter, 'read')
+        } catch {}
       }
       return view
     },
@@ -1066,6 +1122,96 @@ export function apply(ctx, config = {}) {
     /** The raw trace of a job — for the panel and for `course_status`. */
     trace(jobId) {
       return readTrace(traceOf(jobId))
+    },
+
+    /**
+     * What this course already knows: goal, progress, mistakes.
+     *
+     * A miss is not an error. An empty memory answers `course: null` plus the
+     * courses it does know, because inventing a 目标分 is worse than asking for it.
+     */
+    recall(options = {}) {
+      let ref = String(options.course || '').trim()
+      if (!ref && options.jobId) {
+        const job = jobOf(options.jobId)
+        if (!job) return failure(CODES.jobNotFound, '任务不存在', { hint: '用 course_library 找 jobId' })
+        const course = ensureCourse(job)
+        if (!course) {
+          return failure(CODES.jobNotReady, '这个任务还没有课程标题，记忆里挂不上', {
+            retryable: true,
+            hint: '等 course_status 到 done 再 course_recall',
+          })
+        }
+        ref = course.id
+      }
+      const out = memory.recall(ref, { mistakes: options.mistakes })
+      if (out.ok) return out
+      const known = out.known || []
+      return {
+        ok: true,
+        course: null,
+        ambiguous: out.ambiguous,
+        known,
+        hint: known.length
+          ? '记忆里没有这门课：从 known 里挑一个标题，或直接 course_ingest 建档'
+          : '还没有任何课程记忆：course_ingest 建档后，用 course_note 记目标分 / 剩余天数 / 错题',
+      }
+    },
+
+    /**
+     * Write what the user just told us: 目标, 进度, 错题.
+     *
+     * Nothing here is inferred from the courseware — only what the user said or
+     * what a finished job already stated (days / target / minutes / level).
+     */
+    note(options = {}) {
+      const job = options.jobId ? jobOf(options.jobId) : null
+      if (options.jobId && !job) return failure(CODES.jobNotFound, '任务不存在', { hint: '用 course_library 找 jobId' })
+      const title = String(options.course || job?.courseTitle || '').trim()
+      if (!title) {
+        return failure(CODES.badRequest, '请给出 course（课程名）或 jobId', {
+          hint: '例如 course_note { course: "实验3", goal: { days: 3 } }',
+        })
+      }
+      const course = job ? ensureCourse(job) : memory.upsert({ title })
+      if (!course) return failure(CODES.internal, '记忆文件写不进去（磁盘或权限问题）', { retryable: true })
+      const applied = {}
+      if (options.goal && typeof options.goal === 'object') {
+        const result = memory.setGoal(course.id, options.goal)
+        if (result.ok) applied.goal = memory.read().courses[course.id]?.goal || {}
+      }
+      if (options.chapter) {
+        const state = options.state || 'explained'
+        const result = memory.markChapter(course.id, options.chapter, state)
+        if (result.ok) applied.chapter = { chapter: Number(options.chapter), state: result.course.progress[Number(options.chapter)] }
+      }
+      if (options.mistake) {
+        const result = memory.addMistake(course.id, options.mistake)
+        if (result.ok) {
+          const saved = memory.read().courses[course.id]
+          applied.mistake = saved?.mistakes?.[0]
+          applied.mistakesTotal = saved?.mistakes?.length || 0
+        } else {
+          return failure(CODES.badRequest, '错题至少要包含 question 或 note', {
+            hint: '例如 mistake: { chapter: 3, page: 12, question: "虚函数开销", note: "答成了静态绑定" }',
+          })
+        }
+      }
+      if (options.clearMistakes) {
+        memory.clearMistakes(course.id)
+        applied.clearedMistakes = true
+      }
+      if (!Object.keys(applied).length) {
+        return failure(CODES.badRequest, '没有要记录的内容', {
+          hint: '用 goal / chapter（可带 state）/ mistake / clearMistakes 之一',
+        })
+      }
+      return {
+        ok: true,
+        course: { id: course.id, title: course.title },
+        applied,
+        next: { tool: 'course_recall', hint: '需要时 course_recall 复核记忆；下次会话直接从这里接着讲' },
+      }
     },
 
     /**
